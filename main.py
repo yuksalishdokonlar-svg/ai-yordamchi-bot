@@ -169,7 +169,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=(
                 "Sen o‘zbek tilida javob beradigan yordamchisan. "
                 "Internet qidiruv natijalaridan foydalan. "
