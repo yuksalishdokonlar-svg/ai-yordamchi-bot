@@ -1,13 +1,16 @@
 import os
 import asyncio
+import logging
 import re
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from threading import Thread
 
-from flask import Flask
 from ddgs import DDGS
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -23,29 +26,42 @@ load_dotenv(BASE_DIR / ".env", override=True)
 TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+logging.basicConfig(
+    filename=BASE_DIR / "bot.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    encoding="utf-8",
+)
+logger = logging.getLogger(__name__)
+
 client = None
 
-# --- Render.com 24/7 ishlashi uchun kichik veb-server ---
-web_app = Flask(__name__)
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    """Render platformasi 'bot ishlayaptimi' deb tekshirishi uchun oddiy javob."""
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot ishlab turibdi.")
+
+    def log_message(self, format, *args):
+        pass  # konsolni keraksiz loglar bilan to'ldirmaslik uchun
 
 
-@web_app.route("/")
-def home():
-    return "Bot 24/7 faol ishlamoqda!"
+def start_health_server():
+    port = int(os.getenv("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    logger.info("Health-check server %s portda ishga tushdi", port)
 
 
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    web_app.run(host="0.0.0.0", port=port)
-
-
-def keep_alive():
-    t = Thread(target=run_web, daemon=True)
-    t.start()
-
-
-# --- Web qidiruv funksiyasi ---
 def search_web(query, retries=2):
+    """
+    DDGS ba'zan uzun/murakkab jumlalarda 'No results found' xatosini beradi,
+    shuning uchun bir necha marta qayta urinamiz va zarur bo'lsa so'rovni
+    qisqartiramiz.
+    """
     attempt_query = query
     last_error = None
 
@@ -58,6 +74,7 @@ def search_web(query, retries=2):
             last_error = e
             print(f"Qidiruv urinishi {attempt + 1} muvaffaqiyatsiz:", repr(e))
 
+        # Keyingi urinishda so'rovni qisqartirib ko'ramiz (birinchi 6 so'z)
         words = attempt_query.split()
         if len(words) > 6:
             attempt_query = " ".join(words[:6])
@@ -67,15 +84,6 @@ def search_web(query, retries=2):
     if last_error:
         print("Qidiruv yakuniy xatosi:", repr(last_error))
     return []
-
-
-# --- Eslatma yuborish funksiyasi ---
-async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    await context.bot.send_message(
-        chat_id=job.chat_id,
-        text=f"⏰ Eslatma!\n{job.data}",
-    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,59 +96,92 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    await process_user_text(update, context, update.message.text)
+
+
+async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Telegramdan kelgan ovozli xabarni (voice yoki audio) Gemini yordamida
+    matnga aylantiradi va shu matn asosida javob qaytaradi.
+    """
+    voice = update.message.voice or update.message.audio
+
+    await update.message.reply_text("Ovozli xabarni tinglayapman...")
+
+    try:
+        tg_file = await context.bot.get_file(voice.file_id)
+        audio_bytes = await tg_file.download_as_bytearray()
+
+        mime_type = "audio/ogg" if update.message.voice else "audio/mpeg"
+
+        transcription_response = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-2.0-flash",
+            contents=[
+                types.Part.from_bytes(data=bytes(audio_bytes), mime_type=mime_type),
+                "Ushbu audio yozuvini so'zma-so'z o'zbek tilida matnga "
+                "aylantir. Faqat transkripsiya matnini qaytar, boshqa "
+                "hech qanday izoh yoki qo‘shimcha so‘z yozma.",
+            ],
+        )
+
+        transcribed_text = (transcription_response.text or "").strip()
+        if not transcribed_text:
+            await update.message.reply_text(
+                "Kechirasiz, ovozli xabarni tushuna olmadim. "
+                "Iltimos, yana bir bor urinib ko‘ring yoki matn yozing."
+            )
+            return
+
+            await update.message.reply_text(f"🗣 Siz aytdingiz: «{transcribed_text}»")
+
+    except Exception as e:
+      print("Ovozni matnga aylantirish xatosi:", repr(e))
+    await update.message.reply_text(
+            "Kechirasiz, ovozli xabarni matnga aylantira olmadim. "
+            "Birozdan keyin qayta urinib ko‘ring yoki matn yozing."
+        )
+    return
+
+    await process_user_text(update, context, transcribed_text)
+
+
+async def process_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     lower_text = text.lower()
     chat_id = update.effective_chat.id
 
-   # --- Eslatma (Reminder) ---
+    # --- Reminder (eslatma) handling ---
     match = re.search(
-        r"(\d+)\s*(soniya|sekund|minut|daqiqa|soat)\s*(?:dan\s*keyin|da|ga)?",
+        r"(\d+)\s*(?:minut|daqiqa)\s*dan\s*keyin",
         lower_text,
     )
 
-    if match and any(w in lower_text for w in ("eslat", "keyin", "taymer")):
-        amount = int(match.group(1))
-        unit = match.group(2)
+    if match:
+        minutes = int(match.group(1))
+        reminder = text[match.end():].strip(" ,.!")
 
-        if unit in ("soniya", "sekund"):
-            seconds = amount
-            unit_name = "soniya"
-        elif unit in ("minut", "daqiqa"):
-            seconds = amount * 60
-            unit_name = "daqiqa"
-        else:
-            seconds = amount * 3600
-            unit_name = "soat"
-
-        if not 5 <= seconds <= 86400:
-            await update.message.reply_text("5 soniyadan 24 soatgacha vaqt kiriting.")
+        if not 1 <= minutes <= 1440:
+            await update.message.reply_text("1 dan 1440 minutgacha kiriting.")
             return
-
-        reminder = (text[:match.start()] + " " + text[match.end():]).strip()
-        reminder = re.sub(
-            r"\b(menga|iltimos|eslatib\s*qo['‘’]?y|eslat|deb)\b",
-            "",
-            reminder,
-            flags=re.IGNORECASE,
-        )
-        reminder = re.sub(r"\s+", " ", reminder).strip(" ,.!-")
 
         if not reminder:
             await update.message.reply_text(
-                "Nimani eslatishim kerakligini ham yozing. Masalan: 10 daqiqadan keyin choy ichish"
+                "Nimani eslatishim kerakligini ham yozing."
             )
             return
 
         await update.message.reply_text(
-            f"Xo‘p! {amount} {unit_name}dan keyin «{reminder}» deb eslataman."
+            f"Xo‘p! {minutes} daqiqadan keyin eslataman."
         )
 
-        context.job_queue.run_once(
-            send_reminder_job,
-            when=seconds,
-            chat_id=chat_id,
-            data=reminder,
-        )
+        async def send_reminder():
+            await asyncio.sleep(minutes * 60)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⏰ Eslatma!\n{reminder}",
+            )
+
+        asyncio.create_task(send_reminder())
         return
 
     # --- Web search (agar kerak bo'lsa) ---
@@ -163,63 +204,103 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Havola: {r.get('href', '')}"
         for r in search_results
     )
-# --- Gemini javobi ---
-    wait_msg = await update.message.reply_text("Savolingizni ko‘rib chiqyapman...")
+
+    # --- Gemini javobi ---
+    await update.message.reply_text("Savolingizni ko‘rib chiqyapman...")
+
     try:
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-3.8-flash",
-                contents=(
-                    "Sen o‘zbek tilida javob beradigan yordamchisan. "
-                    "Internet qidiruv natijalaridan foydalan. "
-                    "O‘zbekiston soliqlari va qonunlari haqida savollarda "
-                    "rasmiy manbalarni ustun qo‘y: soliq.uz, lex.uz, gov.uz. "
-                    "Topilmagan ma'lumotni o‘ylab topma. "
-                    "Foydalanilgan havolalarni javobda ko‘rsat.\n\n"
-                    "Internet qidiruv natijalari:\n"
-                    + (search_context or "Qidiruv bajarilmadi.")
-                    + "\n\nFoydalanuvchi savoli:\n"
-                    + text
-                ),
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-2.0-flash",
+            contents=(
+                "Sen o‘zbek tilida javob beradigan yordamchisan. "
+                "Internet qidiruv natijalaridan foydalan. "
+                "O‘zbekiston soliqlari va qonunlari haqida savollarda "
+                "rasmiy manbalarni ustun qo‘y: soliq.uz, lex.uz, gov.uz. "
+                "Topilmagan ma'lumotni o‘ylab topma. "
+                "Foydalanilgan havolalarni javobda ko‘rsat.\n\n"
+                "Internet qidiruv natijalari:\n"
+                + (search_context or "Qidiruv bajarilmadi.")
+                + "\n\nFoydalanuvchi savoli:\n"
+                + text
             ),
-            timeout=30.0,
         )
 
         answer = response.text or "Hozir javob tayyorlay olmadim."
-        await wait_msg.delete()
 
         for i in range(0, len(answer), 4000):
             await update.message.reply_text(answer[i:i + 4000])
 
     except Exception as e:
-        print("Gemini xatosi:", repr(e), flush=True)
-        await wait_msg.edit_text(
-            f"Xatolik yuz berdi: {type(e).name}. Qayta urinib ko‘ring."
+        print("Gemini xatosi:", repr(e))
+        await update.message.reply_text(
+            "Kechirasiz, hozir AI javob bera olmadi. "
+            "Birozdan keyin qayta urinib ko‘ring."
         )
 
 
-def main():
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Har qanday handler ichida kutilmagan xato chiqsa ham, dastur to'xtab
+[20.11.2026 17:41] Nodirjon: qolmasligi uchun bu yerda ushlab, logga yozib qo'yamiz.
+    """
+    logger.error("Kutilmagan xato: %s", context.error, exc_info=context.error)
+    try:
+        if isinstance(update, Update) and update.effective_message:
+            await update.effective_message.reply_text(
+                "Kechirasiz, kutilmagan xatolik yuz berdi. "
+                "Qaytadan urinib ko‘ring."
+            )
+    except Exception:
+        pass
+
+
+def build_app():
     global client
 
     if not TOKEN:
-        raise ValueError("BOT_TOKEN topilmadi. Environment Variables ni tekshiring.")
+        raise ValueError("BOT_TOKEN topilmadi. .env faylini tekshiring.")
 
     if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY topilmadi. Environment Variables ni tekshiring.")
+        raise ValueError("GEMINI_API_KEY topilmadi. .env faylini tekshiring.")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-
-    keep_alive()
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     )
+    app.add_handler(
+        MessageHandler(filters.VOICE | filters.AUDIO, transcribe_voice)
+    )
+    app.add_error_handler(error_handler)
+    return app
 
-    print("AI yordamchi 24/7 rejimda ishga tushdi!", flush=True)
-    app.run_polling(drop_pending_updates=True)
+
+def main():
+    """
+    Noutbuk va Python ochiq turgan hamma vaqt bot ishlab tursin deb,
+    har qanday kutilmagan uzilishdan keyin botni avtomatik qayta
+    ishga tushiramiz (cheksiz tashqi tsikl).
+    """
+    restart_delay = 5  # soniya, har muvaffaqiyatsiz urinishdan keyin ortadi
+
+    start_health_server()
+
+    while True:
+        try:
+            app = build_app()
+            logger.info("AI yordamchi ishga tushdi!")
+            print("AI yordamchi ishga tushdi! (to'xtatish uchun Ctrl+C)")
+            app.run_polling()
+            # run_polling o'zi to'xtasa (masalan Ctrl+C), tsikldan chiqamiz
+            break
+        except Exception as e:
+            logger.error("Bot yiqildi, qayta ishga tushirilmoqda: %s", repr(e))
+            print(f"Xatolik yuz berdi, {restart_delay} soniyadan keyin qayta urinaman: {e}")
+            time.sleep(restart_delay)
+            restart_delay = min(restart_delay * 2, 60)  # eksponensial kutish, max 60s
 
 
 if __name__ == "__main__":
