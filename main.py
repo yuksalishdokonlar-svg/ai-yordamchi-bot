@@ -3,7 +3,6 @@ import asyncio
 import logging
 import re
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -133,15 +132,15 @@ async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-            await update.message.reply_text(f"🗣 Siz aytdingiz: «{transcribed_text}»")
+        await update.message.reply_text(f"🗣 Siz aytdingiz: «{transcribed_text}»")
 
     except Exception as e:
-      print("Ovozni matnga aylantirish xatosi:", repr(e))
-    await update.message.reply_text(
+        print("Ovozni matnga aylantirish xatosi:", repr(e))
+        await update.message.reply_text(
             "Kechirasiz, ovozli xabarni matnga aylantira olmadim. "
             "Birozdan keyin qayta urinib ko‘ring yoki matn yozing."
         )
-    return
+        return
 
     await process_user_text(update, context, transcribed_text)
 
@@ -211,7 +210,7 @@ async def process_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     try:
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-2.0-flash",
+            model="gemini-3.8-flash",
             contents=(
                 "Sen o‘zbek tilida javob beradigan yordamchisan. "
                 "Internet qidiruv natijalaridan foydalan. "
@@ -242,7 +241,7 @@ async def process_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
     """
     Har qanday handler ichida kutilmagan xato chiqsa ham, dastur to'xtab
-[20.11.2026 17:41] Nodirjon: qolmasligi uchun bu yerda ushlab, logga yozib qo'yamiz.
+[20.11.2026 20:00] Nodirjon: qolmasligi uchun bu yerda ushlab, logga yozib qo'yamiz.
     """
     logger.error("Kutilmagan xato: %s", context.error, exc_info=context.error)
     try:
@@ -280,28 +279,20 @@ def build_app():
 
 def main():
     """
-    Noutbuk va Python ochiq turgan hamma vaqt bot ishlab tursin deb,
-    har qanday kutilmagan uzilishdan keyin botni avtomatik qayta
-    ishga tushiramiz (cheksiz tashqi tsikl).
+    MUHIM: run_polling() ni bitta jarayon ichida ikki marta ishga
+    tushirish xavfli (python-telegram-bot buni to'g'ri ko'tara olmaydi
+    va botni "jim" holatda qotirib qo'yishi mumkin). Shuning uchun bu
+    yerda qayta urinish TSIKLI yo'q: xato chiqsa, jarayon butunlay
+    to'xtaydi va uni Render platformasining o'zi avtomatik qayta
+    ishga tushiradi (bu ancha ishonchli usul).
     """
-    restart_delay = 5  # soniya, har muvaffaqiyatsiz urinishdan keyin ortadi
-
     start_health_server()
 
-    while True:
-        try:
-            app = build_app()
-            logger.info("AI yordamchi ishga tushdi!")
-            print("AI yordamchi ishga tushdi! (to'xtatish uchun Ctrl+C)")
-            app.run_polling()
-            # run_polling o'zi to'xtasa (masalan Ctrl+C), tsikldan chiqamiz
-            break
-        except Exception as e:
-            logger.error("Bot yiqildi, qayta ishga tushirilmoqda: %s", repr(e))
-            print(f"Xatolik yuz berdi, {restart_delay} soniyadan keyin qayta urinaman: {e}")
-            time.sleep(restart_delay)
-            restart_delay = min(restart_delay * 2, 60)  # eksponensial kutish, max 60s
+    app = build_app()
+    logger.info("AI yordamchi ishga tushdi!")
+    print("AI yordamchi ishga tushdi! (to'xtatish uchun Ctrl+C)")
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    main() 
+    main()
