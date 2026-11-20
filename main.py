@@ -163,25 +163,27 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Havola: {r.get('href', '')}"
         for r in search_results
     )
-
-    # --- Gemini javobi ---
+# --- Gemini javobi ---
     wait_msg = await update.message.reply_text("Savolingizni ko‘rib chiqyapman...")
     try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-3.8-flash",
-            contents=(
-                "Sen o‘zbek tilida javob beradigan yordamchisan. "
-                "Internet qidiruv natijalaridan foydalan. "
-                "O‘zbekiston soliqlari va qonunlari haqida savollarda "
-                "rasmiy manbalarni ustun qo‘y: soliq.uz, lex.uz, gov.uz. "
-                "Topilmagan ma'lumotni o‘ylab topma. "
-                "Foydalanilgan havolalarni javobda ko‘rsat.\n\n"
-                "Internet qidiruv natijalari:\n"
-                + (search_context or "Qidiruv bajarilmadi.")
-                + "\n\nFoydalanuvchi savoli:\n"
-                + text
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-3.8-flash",
+                contents=(
+                    "Sen o‘zbek tilida javob beradigan yordamchisan. "
+                    "Internet qidiruv natijalaridan foydalan. "
+                    "O‘zbekiston soliqlari va qonunlari haqida savollarda "
+                    "rasmiy manbalarni ustun qo‘y: soliq.uz, lex.uz, gov.uz. "
+                    "Topilmagan ma'lumotni o‘ylab topma. "
+                    "Foydalanilgan havolalarni javobda ko‘rsat.\n\n"
+                    "Internet qidiruv natijalari:\n"
+                    + (search_context or "Qidiruv bajarilmadi.")
+                    + "\n\nFoydalanuvchi savoli:\n"
+                    + text
+                ),
             ),
+            timeout=30.0,
         )
 
         answer = response.text or "Hozir javob tayyorlay olmadim."
@@ -191,10 +193,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(answer[i:i + 4000])
 
     except Exception as e:
-        print("Gemini xatosi:", repr(e))
+        print("Gemini xatosi:", repr(e), flush=True)
         await wait_msg.edit_text(
-            "Kechirasiz, hozir AI javob bera olmadi. "
-            "Birozdan keyin qayta urinib ko‘ring."
+            f"Xatolik yuz berdi: {type(e).name}. Qayta urinib ko‘ring."
         )
 
 
@@ -217,8 +218,8 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     )
 
-    print("AI yordamchi 24/7 rejimda ishga tushdi!")
-    app.run_polling()
+    print("AI yordamchi 24/7 rejimda ishga tushdi!", flush=True)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
