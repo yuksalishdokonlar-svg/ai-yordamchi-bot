@@ -116,7 +116,7 @@ async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         transcription_response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-3.0-flash",
+            model="gemini-3.8-flash",
             contents=[
                 types.Part.from_bytes(data=bytes(audio_bytes), mime_type=mime_type),
                 "Ushbu audio yozuvini so'zma-so'z o'zbek tilida matnga "
