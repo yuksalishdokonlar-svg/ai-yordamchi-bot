@@ -1,5 +1,7 @@
-python-telegram-bot[job-queue]
+aiogram
 google-genai
-flask
 python-dotenv
-ddgs
+edge-tts
+python-docx
+tzdata
+aiohttp
