@@ -5,3 +5,6 @@ edge-tts
 python-docx
 tzdata
 aiohttp
+openpyxl
+fpdf2
+yt-dlp

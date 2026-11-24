@@ -1,23 +1,28 @@
 import asyncio
+import glob
 import io
+import json
 import logging
 import os
 import re
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict
 from zoneinfo import ZoneInfo
 
 import edge_tts
+import yt_dlp
 from aiohttp import web
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
-from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BufferedInputFile, Message, TelegramObject
+from aiogram.types import BufferedInputFile, FSInputFile, Message, TelegramObject
 from docx import Document
 from dotenv import load_dotenv
+from fpdf import FPDF
 from google import genai
 from google.genai import types
+from openpyxl import Workbook
 
 # 1. .env faylidan o'zgaruvchilarni yuklash
 load_dotenv()
@@ -45,6 +50,7 @@ Qoidalar:
 - Ovozli javoblar uchun ortiqcha belgilar (*, #, _) ishlatma, chunki matn ovozga o'giriladi.
 - Jonli ma'lumotlar (ob-havo, yangiliklar, valyuta kurslari, sport natijalari) so'ralganda Google Search natijalariga tayanib eng so'nggi faktlarni keltir.
 - Hujjatlar (PDF, Word yoki matnli fayllar) yuborilganda ularning asosiy mazmuni, raqamlar va muhim xulosalarini tizimli ravishda chiqar.
+- Agar foydalanuvchi Excel (.xlsx), Word (.docx), PDF (.pdf) yoki TXT (.txt) fayl tayyorlab berishni so'rasa, HECH QACHON soxta havola yoki '[Yuklab olish: ...]' deb yozma! Buning o'rniga tegishli fayl yaratish funksiyasini (create_excel_file, create_word_file, create_pdf_file yoki create_text_file) chaqir.
 - O'zbek tilida ravon javob ber.
 """
 
@@ -70,6 +76,34 @@ REMINDER_KEYWORDS = (
     "reja",
     "jadval",
 )
+
+# Fayl yaratish rejimini aniqlash uchun kalit so'zlar
+FILE_GEN_KEYWORDS = (
+    "excel",
+    "exzel",
+    "exel",
+    "xlsx",
+    "jadval fayl",
+    "word",
+    "wort",
+    "docx",
+    "pdf",
+    "txt",
+    "fayl qil",
+    "fayl yarat",
+    "fayl tayyorla",
+    "fayl ber",
+    "fayl tashla",
+    "fayl jo'nat",
+    "faylni ber",
+    "faylni tashla",
+    "hujjat tayyorla",
+)
+
+YOUTUBE_URL_PATTERN = re.compile(
+    r"(https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/|live/)|youtu\.be/)[^\s]+)"
+)
+AUDIO_INTENT_KEYWORDS = ("audio", "mp3", "qo'shiq", "qoshiq", "musiqa", "ovoz")
 
 SUPPORTED_DOC_MIMES = {
     "application/pdf": "application/pdf",
@@ -230,8 +264,17 @@ def clear_history_in_db(user_id: int):
         conn.commit()
 
 
-# --- 5. Eslatmalar (Gemini Function Calling Tools) ---
-def create_reminder_tools_for_user(user_id: int):
+# --- 5. Eslatmalar va Fayl Yaratish (Gemini Function Calling Tools) ---
+def _safe_filename(filename: str, default_ext: str) -> str:
+    clean = re.sub(r'[\\/*?:"<>|]', "_", filename.strip())
+    if not clean:
+        clean = f"jarvis_hujjat{default_ext}"
+    if not clean.lower().endswith(default_ext):
+        clean += default_ext
+    return clean
+
+
+def create_tools_for_user(user_id: int, generated_files: list):
     def set_reminder(
         remind_at_iso: str, reminder_text: str, is_daily: bool = False
     ) -> str:
@@ -323,16 +366,137 @@ def create_reminder_tools_for_user(user_id: int):
 
         return f"Bekor qilindi: [ID: {reminder_id}] '{row[0]}' eslatmasi muvaffaqiyatli o'chirildi."
 
-    return [set_reminder, list_reminders, delete_reminder]
+    def create_excel_file(filename: str, sheet_title: str, rows_json: str) -> str:
+        """Haqiqiy Excel (.xlsx) fayl yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi. Excel formulalarini (=SUM(A1:A5), =1+1) qo'llab-quvvatlaydi.
+
+        Args:
+            filename: Fayl nomi (masalan, 'hisobot.xlsx').
+            sheet_title: Excel varag'i nomi (masalan, 'Hisobot').
+            rows_json: Qatorlar ro'yxati JSON formatda. Masalan: '[["Nomi", "Miqdor"], ["Olma", 5], ["Jami", "=SUM(B2:B2)"]]'.
+        """
+        try:
+            rows = json.loads(rows_json)
+            wb = Workbook()
+            ws = wb.active
+            ws.title = (sheet_title or "Sheet1")[:31]
+
+            for row in rows:
+                if isinstance(row, list):
+                    ws.append(row)
+                else:
+                    ws.append([str(row)])
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            safe_name = _safe_filename(filename, ".xlsx")
+            generated_files.append((safe_name, buf.getvalue()))
+            return f"Excel fayl '{safe_name}' muvaffaqiyatli yaratildi va yuborish navbatiga qo'shildi."
+        except Exception as e:
+            return f"Excel fayl yaratishda xatolik: {e}"
+
+    def create_word_file(filename: str, title: str, content: str) -> str:
+        """Haqiqiy Word (.docx) hujjat yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi.
+
+        Args:
+            filename: Fayl nomi (masalan, 'hujjat.docx').
+            title: Hujjat sarlavhasi.
+            content: Hujjatning asosiy matni (abzaslar yangi qatordan ajratiladi).
+        """
+        try:
+            doc = Document()
+            if title:
+                doc.add_heading(title, level=1)
+            for line in content.split("\n"):
+                if line.strip():
+                    doc.add_paragraph(line.strip())
+
+            buf = io.BytesIO()
+            doc.save(buf)
+            safe_name = _safe_filename(filename, ".docx")
+            generated_files.append((safe_name, buf.getvalue()))
+            return f"Word fayl '{safe_name}' muvaffaqiyatli yaratildi va yuborish navbatiga qo'shildi."
+        except Exception as e:
+            return f"Word fayl yaratishda xatolik: {e}"
+
+    def create_pdf_file(filename: str, title: str, content: str) -> str:
+        """Haqiqiy PDF (.pdf) hujjat yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi.
+
+        Args:
+            filename: Fayl nomi (masalan, 'hujjat.pdf').
+            title: PDF sarlavhasi.
+            content: PDF asosiy matni.
+        """
+        try:
+            replacements = {
+                "‘": "'",
+                "’": "'",
+                "“": '"',
+                "”": '"',
+                "—": "-",
+                "–": "-",
+                "…": "...",
+            }
+            clean_title = title or ""
+            clean_content = content or ""
+            for k, v in replacements.items():
+                clean_title = clean_title.replace(k, v)
+                clean_content = clean_content.replace(k, v)
+
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_auto_page_break(auto=True, margin=15)
+
+            if clean_title:
+                pdf.set_font("Helvetica", style="B", size=16)
+                safe_title = clean_title.encode("latin-1", "replace").decode("latin-1")
+                pdf.multi_cell(0, 10, text=safe_title)
+                pdf.ln(4)
+
+            pdf.set_font("Helvetica", size=12)
+            safe_body = clean_content.encode("latin-1", "replace").decode("latin-1")
+            pdf.multi_cell(0, 8, text=safe_body)
+
+            pdf_bytes = bytes(pdf.output())
+            safe_name = _safe_filename(filename, ".pdf")
+            generated_files.append((safe_name, pdf_bytes))
+            return f"PDF fayl '{safe_name}' muvaffaqiyatli yaratildi va yuborish navbatiga qo'shildi."
+        except Exception as e:
+            return f"PDF fayl yaratishda xatolik: {e}"
+
+    def create_text_file(filename: str, content: str) -> str:
+        """Haqiqiy TXT (.txt) matn fayli yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi.
+
+        Args:
+            filename: Fayl nomi (masalan, 'qaydlar.txt').
+            content: Fayl ichidagi matn.
+        """
+        try:
+            safe_name = _safe_filename(filename, ".txt")
+            generated_files.append((safe_name, content.encode("utf-8")))
+            return f"TXT fayl '{safe_name}' muvaffaqiyatli yaratildi va yuborish navbatiga qo'shildi."
+        except Exception as e:
+            return f"TXT fayl yaratishda xatolik: {e}"
+
+    return [
+        set_reminder,
+        list_reminders,
+        delete_reminder,
+        create_excel_file,
+        create_word_file,
+        create_pdf_file,
+        create_text_file,
+    ]
 
 
-def is_reminder_intent(text: str) -> bool:
-    """So'rov eslatmalarga oid ekanligini tekshiradi."""
+def should_enable_tools(text: str) -> bool:
+    """So'rov eslatma yoki fayl yaratishga oid ekanligini tekshiradi."""
     lower_text = text.lower()
-    return any(keyword in lower_text for keyword in REMINDER_KEYWORDS)
+    return any(k in lower_text for k in REMINDER_KEYWORDS) or any(
+        k in lower_text for k in FILE_GEN_KEYWORDS
+    )
 
 
-def build_chat_config(user_id: int, use_reminder_tools: bool = False):
+def build_chat_config(user_id: int, tools_list: list | None = None):
     now_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S (%A)")
     dynamic_instruction = (
         f"{JARVIS_BASE_INSTRUCTION}\n"
@@ -340,27 +504,27 @@ def build_chat_config(user_id: int, use_reminder_tools: bool = False):
         f"Nisbiy vaqtlarni shu vaqt asosida hisobla."
     )
 
-    if use_reminder_tools:
-        active_tools = create_reminder_tools_for_user(user_id)
-    else:
-        active_tools = None
-
     return types.GenerateContentConfig(
         system_instruction=dynamic_instruction,
-        tools=active_tools,
+        tools=tools_list if tools_list else None,
         temperature=0.7,
     )
 
 
 async def send_message_with_fallback(
-    user_id: int, message_content: Any, use_reminder_tools: bool = False
+    user_id: int, message_content: Any, use_tools: bool = False
 ):
-    """Zaxira modellar ro'yxati bo'yicha javob oladi (503/429 holatlarida avtomatik keyingi modelga o'tadi)."""
+    """Zaxira modellar ro'yxati bo'yicha javob va yaratilgan fayllarni oladi."""
     history = load_history_from_db(user_id)
-    config = build_chat_config(user_id, use_reminder_tools=use_reminder_tools)
     last_error = None
 
     for model_id in FALLBACK_MODELS:
+        generated_files: list[tuple[str, bytes]] = []
+        tools_list = (
+            create_tools_for_user(user_id, generated_files) if use_tools else None
+        )
+        config = build_chat_config(user_id, tools_list=tools_list)
+
         try:
             chat = client.chats.create(
                 model=model_id,
@@ -368,7 +532,7 @@ async def send_message_with_fallback(
                 config=config,
             )
             response = await asyncio.to_thread(chat.send_message, message_content)
-            return response
+            return response, generated_files
         except Exception as e:
             last_error = e
             logging.warning(
@@ -464,7 +628,62 @@ async def reminder_scheduler():
         await asyncio.sleep(15)
 
 
-# --- 7. Yordamchi Funksiyalar (DOCX o'qish, TTS va Javob yuborish) ---
+# --- 7. Yordamchi Funksiyalar (DOCX o'qish, TTS, YouTube va Javob/Fayl yuborish) ---
+def download_youtube_media(
+    query_or_url: str, audio_only: bool, out_dir: str
+) -> tuple[str, str, str]:
+    """YouTube havolasi yoki qidiruv so'zi bo'yicha media yuklaydi va (fayl_yoli, sarlavha, havola) qaytaradi."""
+    out_tmpl = os.path.join(out_dir, "%(title).60s.%(ext)s")
+    target = (
+        query_or_url
+        if YOUTUBE_URL_PATTERN.search(query_or_url)
+        else f"ytsearch1:{query_or_url}"
+    )
+
+    if audio_only:
+        ydl_opts = {
+            "format": "bestaudio[ext=m4a]/bestaudio[filesize<48M]/bestaudio",
+            "outtmpl": out_tmpl,
+            "noplaylist": True,
+            "default_search": "ytsearch",
+            "quiet": True,
+            "no_warnings": True,
+        }
+    else:
+        ydl_opts = {
+            "format": (
+                "best[ext=mp4][height>=360][height<=720][filesize<48M]/"
+                "best[ext=mp4][height>=360][filesize<48M]/"
+                "best[ext=mp4][height>=360]/"
+                "best[height>=360]"
+            ),
+            "outtmpl": out_tmpl,
+            "noplaylist": True,
+            "default_search": "ytsearch",
+            "quiet": True,
+            "no_warnings": True,
+        }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(target, download=True)
+        if "entries" in info and info["entries"]:
+            info = info["entries"][0]
+
+        title = info.get("title") or "YouTube Media"
+        video_url = info.get("webpage_url") or (
+            query_or_url if YOUTUBE_URL_PATTERN.search(query_or_url) else ""
+        )
+        downloaded_path = ydl.prepare_filename(info)
+
+        if not os.path.exists(downloaded_path):
+            files = glob.glob(os.path.join(out_dir, "*"))
+            if not files:
+                raise FileNotFoundError("Media fayl yuklanmadi.")
+            downloaded_path = files[0]
+
+        return downloaded_path, title, video_url
+
+
 def extract_text_from_docx(doc_bytes: bytes) -> str:
     doc = Document(io.BytesIO(doc_bytes))
     extracted_parts = []
@@ -508,6 +727,12 @@ async def send_long_message(message: Message, text: str):
         await message.answer(text)
 
 
+async def send_generated_files(message: Message, generated_files: list[tuple[str, bytes]]):
+    for file_name, file_bytes in generated_files:
+        doc_file = BufferedInputFile(file_bytes, filename=file_name)
+        await message.answer_document(document=doc_file)
+
+
 async def send_jarvis_reply(message: Message, reply_text: str, force_voice: bool = False):
     user_id = message.from_user.id
     use_voice = force_voice or is_voice_mode_enabled(user_id)
@@ -534,7 +759,7 @@ async def cmd_start(message: Message):
 
     welcome_text = (
         "Xush kelibsiz, Janob. J.A.R.V.I.S. tizimi to‘liq ishga tushirildi: "
-        "Google Search jonli qidiruv, ovozli aloqa, eslatmalar, rasm hamda PDF/Word hujjatlar tahlili tayyor."
+        "ovozli aloqa, eslatmalar, YouTube video/qo‘shiq yuklash, rasm hamda Excel, Word, PDF va TXT hujjatlarni tahlil qilish va yaratish tayyor."
     )
     save_message_to_db(user_id, "model", welcome_text)
     await send_jarvis_reply(message, welcome_text, force_voice=True)
@@ -608,16 +833,16 @@ async def handle_document(message: Message):
                 f"Foydalanuvchi buyrug'i: {prompt_text}\n\n"
                 f"--- HUJJAT MATNI ---\n{extracted_text}"
             )
-            response = await send_message_with_fallback(
-                user_id, full_prompt, use_reminder_tools=False
+            response, generated_files = await send_message_with_fallback(
+                user_id, full_prompt, use_tools=True
             )
         else:
             doc_part = types.Part.from_bytes(
                 data=doc_bytes,
                 mime_type=gemini_mime,
             )
-            response = await send_message_with_fallback(
-                user_id, [doc_part, prompt_text], use_reminder_tools=False
+            response, generated_files = await send_message_with_fallback(
+                user_id, [doc_part, prompt_text], use_tools=True
             )
 
         reply_text = (
@@ -629,6 +854,8 @@ async def handle_document(message: Message):
         save_message_to_db(user_id, "model", reply_text)
 
         await send_jarvis_reply(message, reply_text)
+        if generated_files:
+            await send_generated_files(message, generated_files)
 
     except Exception as e:
         logging.exception("Hujjat tahlilida xatolik:")
@@ -652,13 +879,13 @@ async def handle_voice(message: Message):
             mime_type="audio/ogg",
         )
 
-        response = await send_message_with_fallback(
+        response, generated_files = await send_message_with_fallback(
             user_id,
             [
                 audio_part,
-                "Foydalanuvchining ovozli xabarini tingla va unga J.A.R.V.I.S. sifatida javob ber.",
+                "Foydalanuvchining ovozli xabarini tingla va unga J.A.R.V.I.S. sifatida javob ber. Agar fayl yaratish so'ralgan bo'lsa, tegishli fayl yaratish funksiyasidan foydalan.",
             ],
-            use_reminder_tools=True,
+            use_tools=True,
         )
 
         reply_text = (
@@ -670,6 +897,8 @@ async def handle_voice(message: Message):
         save_message_to_db(user_id, "model", reply_text)
 
         await send_jarvis_reply(message, reply_text, force_voice=True)
+        if generated_files:
+            await send_generated_files(message, generated_files)
 
     except Exception as e:
         logging.exception("Ovozli xabarni qayta ishlashda xatolik:")
@@ -700,8 +929,8 @@ async def handle_photo(message: Message):
             mime_type="image/jpeg",
         )
 
-        response = await send_message_with_fallback(
-            user_id, [image_part, prompt_text], use_reminder_tools=False
+        response, generated_files = await send_message_with_fallback(
+            user_id, [image_part, prompt_text], use_tools=True
         )
 
         reply_text = (
@@ -713,6 +942,8 @@ async def handle_photo(message: Message):
         save_message_to_db(user_id, "model", reply_text)
 
         await send_jarvis_reply(message, reply_text)
+        if generated_files:
+            await send_generated_files(message, generated_files)
 
     except Exception as e:
         logging.exception("Rasm tahlilida xatolik:")
@@ -724,82 +955,117 @@ async def handle_photo(message: Message):
 @dp.message(F.text)
 async def handle_text(message: Message):
     user_id = message.from_user.id
+    text_body = message.text or ""
+
+    # 1. YouTube havolasi yoki nomi bo'yicha video/qo'shiq qidirib yuklash
+    yt_match = YOUTUBE_URL_PATTERN.search(text_body)
+    lower_text = text_body.lower()
+    has_yt_keyword = any(
+        w in lower_text for w in ("youtube", "yutub", "yutube")
+    ) and any(
+        w in lower_text
+        for w in (
+            "top",
+            "yukl",
+            "tashla",
+            "ber",
+            "qo'y",
+            "qoy",
+            "mp3",
+            "audio",
+            "video",
+            "qo'shiq",
+            "qoshiq",
+            "musiqa",
+        )
+    )
+
+    if yt_match or has_yt_keyword:
+        if yt_match:
+            yt_target = yt_match.group(1)
+        else:
+            clean_query = re.sub(
+                r"\b(youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|musiqa|audio|mp3|topib|top|yuklab|yuklaver|yukla|tashlab|tashla|ber|bersang|qilib)\b",
+                " ",
+                lower_text,
+            )
+            clean_query = re.sub(r"\s+", " ", clean_query).strip()
+            yt_target = clean_query or text_body
+
+        audio_only = any(k in lower_text for k in AUDIO_INTENT_KEYWORDS)
+
+        status_msg = await message.answer(
+            f"Janob, '{yt_target}' bo‘yicha audio qidirilib yuklanmoqda, biroz kuting..."
+            if audio_only
+            else f"Janob, '{yt_target}' bo‘yicha video qidirilib yuklanmoqda, biroz kuting..."
+        )
+        await bot.send_chat_action(
+            chat_id=message.chat.id,
+            action="upload_voice" if audio_only else "upload_video",
+        )
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                file_path, title, video_url = await asyncio.to_thread(
+                    download_youtube_media, yt_target, audio_only, tmp_dir
+                )
+                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+
+                if file_size_mb > 49.5:
+                    url_part = f"\n\n🔗 Havola: {video_url}" if video_url else ""
+                    await status_msg.edit_text(
+                        f"Janob, '{title}' fayli hajmi ({file_size_mb:.1f} MB) Telegram botining 50 MB cheklovidan katta, "
+                        f"shuning uchun faylni jo‘nata olmadim. Quyidagi havola orqali ko‘rishingiz mumkin:{url_part}"
+                    )
+                    return
+
+                media_file = FSInputFile(file_path)
+                if audio_only:
+                    await message.answer_audio(
+                        audio=media_file, title=title, caption=f"🎵 {title}"
+                    )
+                else:
+                    await message.answer_video(video=media_file, caption=f"🎬 {title}")
+
+                await status_msg.delete()
+                save_message_to_db(user_id, "user", text_body)
+                save_message_to_db(
+                    user_id,
+                    "model",
+                    f"YouTube’dan '{title}' ({'audio' if audio_only else 'video'}) topilib yuklab yuborildi.",
+                )
+        except Exception as e:
+            logging.exception("YouTube yuklashda xatolik:")
+            await status_msg.edit_text(
+                f"Uzr so‘rayman, Janob. YouTube’dan yuklashda xatolik yuz berdi: {e}"
+            )
+        return
+
+    # 2. Oddiy matnli suhbat, eslatmalar va hujjat yaratish
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     try:
-        needs_reminder = is_reminder_intent(message.text)
-        response = await send_message_with_fallback(
-            user_id, message.text, use_reminder_tools=needs_reminder
+        needs_tools = should_enable_tools(text_body)
+        response, generated_files = await send_message_with_fallback(
+            user_id, text_body, use_tools=needs_tools
         )
         reply_text = (
             format_response_with_sources(response)
             or "Kechirasiz, Janob, javob shakllantirishda uzilish yuz berdi."
         )
 
-        save_message_to_db(user_id, "user", message.text)
+        save_message_to_db(user_id, "user", text_body)
         save_message_to_db(user_id, "model", reply_text)
 
         await send_jarvis_reply(message, reply_text)
+        if generated_files:
+            await send_generated_files(message, generated_files)
 
     except Exception as e:
         logging.exception("Matn so'rovida xatolik:")
         await message.answer(
             f"Uzr so‘rayman, Janob. Tizimda kutilmagan nosozlik yuz berdi: {e}"
         )
-
-
-from aiohttp import web
-
-
-async def health_check(request):
-    return web.Response(text="J.A.R.V.I.S. 24/7 faol!")
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-
-from aiohttp import web
-
-
-async def health_check(request):
-    return web.Response(text="J.A.R.V.I.S. 24/7 faol!")
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-
-from aiohttp import web
-
-
-async def health_check(request):
-    return web.Response(text="J.A.R.V.I.S. 24/7 faol!")
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-
-from aiohttp import web
 
 
 async def health_check(request):
