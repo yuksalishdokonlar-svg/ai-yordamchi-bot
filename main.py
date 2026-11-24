@@ -642,7 +642,7 @@ def download_youtube_media(
 
     if audio_only:
         ydl_opts = {
-            "format": "bestaudio[ext=m4a]/bestaudio[filesize<48M]/bestaudio",
+            "format": "bestaudio/best",
             "outtmpl": out_tmpl,
             "noplaylist": True,
             "default_search": "ytsearch",
@@ -651,12 +651,7 @@ def download_youtube_media(
         }
     else:
         ydl_opts = {
-            "format": (
-                "best[ext=mp4][height>=360][height<=720][filesize<48M]/"
-                "best[ext=mp4][height>=360][filesize<48M]/"
-                "best[ext=mp4][height>=360]/"
-                "best[height>=360]"
-            ),
+            "format": "best[ext=mp4][height>=360]/best[height>=360]/best",
             "outtmpl": out_tmpl,
             "noplaylist": True,
             "default_search": "ytsearch",
@@ -666,8 +661,11 @@ def download_youtube_media(
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(target, download=True)
-        if "entries" in info and info["entries"]:
+        if isinstance(info, dict) and "entries" in info and info["entries"]:
             info = info["entries"][0]
+
+        if not isinstance(info, dict):
+            raise RuntimeError("YouTube qidiruvidan natija qaytmadi.")
 
         title = info.get("title") or "YouTube Media"
         video_url = info.get("webpage_url") or (
@@ -678,7 +676,11 @@ def download_youtube_media(
         if not os.path.exists(downloaded_path):
             files = glob.glob(os.path.join(out_dir, "*"))
             if not files:
-                raise FileNotFoundError("Media fayl yuklanmadi.")
+                raise FileNotFoundError(
+                    f"Server yuklay olmadi (ehtimol YouTube bloklagan). Havola: {video_url}"
+                    if video_url
+                    else "Server yuklay olmadi (ehtimol YouTube bloklagan)."
+                )
             downloaded_path = files[0]
 
         return downloaded_path, title, video_url
