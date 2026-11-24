@@ -598,21 +598,39 @@ async def reminder_scheduler():
 
 # --- 7. Yordamchi Funksiyalar (DOCX o'qish, TTS, YouTube va Javob/Fayl yuborish) ---
 def _prepare_youtube_cookie_file(out_dir: str) -> str | None:
-    """YOUTUBE_COOKIES muhit o'zgaruvchisidan vaqtinchalik Netscape cookies fayli yaratadi."""
+    """YOUTUBE_COOKIES matnidagi probellarni Netscape Tab (\t) formatiga tuzatib fayl yaratadi."""
     raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
     if not raw_cookies:
         return None
 
+    fixed_lines = ["# Netscape HTTP Cookie File"]
+    for raw_line in raw_cookies.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if "\t" in line:
+            parts = line.split("\t")
+        else:
+            # Telefondan nusxalanganda Tab o'rniga probel tushib qolgan holatni tuzatish
+            parts = line.split(None, 6)
+
+        if len(parts) == 7:
+            fixed_lines.append("\t".join(parts))
+
+    if len(fixed_lines) <= 1:
+        return None
+
     cookie_path = os.path.join(out_dir, "youtube_cookies.txt")
     with open(cookie_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(raw_cookies.replace("\r\n", "\n") + "\n")
+        f.write("\n".join(fixed_lines) + "\n")
     return cookie_path
 
 
 def download_youtube_media(
     query_or_url: str, audio_only: bool, out_dir: str, link_only: bool = False
 ) -> tuple[str | None, str, str]:
-    """YouTube havolasi yoki qidiruv so'zi bo'yicha media (yoki faqat havola) oladi."""
+    """YouTube havolasi yoki qidiruv so'zi bo'yicha media va haqiqiy havola oladi."""
     out_tmpl = os.path.join(out_dir, "%(title).60s.%(ext)s")
     is_direct_url = bool(YOUTUBE_URL_PATTERN.search(query_or_url))
     target = query_or_url if is_direct_url else f"ytsearch1:{query_or_url}"
@@ -628,9 +646,9 @@ def download_youtube_media(
         base_opts["cookiefile"] = cookie_file
 
     try:
-        # 1-bosqich: Avval video ma'lumotlari va haqiqiy YouTube havolasini olamiz
-        info_opts = {**base_opts, "skip_download": True}
-        with yt_dlp.YoutubeDL(info_opts) as ydl:
+        # 1-bosqich: Video sahifasini ochmasdan tezda sarlavha va haqiqiy YouTube havolasini olamiz
+        flat_opts = {**base_opts, "extract_flat": "in_playlist", "skip_download": True}
+        with yt_dlp.YoutubeDL(flat_opts) as ydl:
             info = ydl.extract_info(target, download=False)
             if isinstance(info, dict) and "entries" in info and info["entries"]:
                 info = info["entries"][0]
@@ -640,16 +658,18 @@ def download_youtube_media(
 
             title = info.get("title") or "YouTube Media"
             video_id = info.get("id")
-            video_url = (
-                info.get("webpage_url")
-                or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
-                or (query_or_url if is_direct_url else "")
-            )
+            raw_url = info.get("url") or info.get("webpage_url") or ""
+            if raw_url.startswith("http"):
+                video_url = raw_url
+            elif video_id:
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+            else:
+                video_url = query_or_url if is_direct_url else ""
 
         if link_only:
             return None, title, video_url
 
-        # 2-bosqich: Media faylni yuklab olamiz
+        # 2-bosqich: Media faylni yuklab olish (agar bloklansa ham video_url saqlanib qoladi)
         if audio_only:
             dl_opts = {**base_opts, "format": "bestaudio/best", "outtmpl": out_tmpl}
         else:
@@ -659,27 +679,28 @@ def download_youtube_media(
                 "outtmpl": out_tmpl,
             }
 
-        with yt_dlp.YoutubeDL(dl_opts) as ydl:
-            dl_info = ydl.extract_info(video_url or target, download=True)
-            if isinstance(dl_info, dict) and "entries" in dl_info and dl_info["entries"]:
-                dl_info = dl_info["entries"][0]
+        try:
+            with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                dl_info = ydl.extract_info(video_url or target, download=True)
+                if isinstance(dl_info, dict) and "entries" in dl_info and dl_info["entries"]:
+                    dl_info = dl_info["entries"][0]
 
-            downloaded_path = ydl.prepare_filename(dl_info)
-            if not os.path.exists(downloaded_path):
-                files = [
-                    p
-                    for p in glob.glob(os.path.join(out_dir, "*"))
-                    if os.path.abspath(p) != os.path.abspath(cookie_file or "")
-                ]
-                if not files:
-                    raise FileNotFoundError(
-                        f"Server faylni yuklay olmadi, lekin havola topildi:\n🔗 {video_url}"
-                        if video_url
-                        else "Server faylni yuklay olmadi."
-                    )
-                downloaded_path = files[0]
+                title = dl_info.get("title") or title
+                downloaded_path = ydl.prepare_filename(dl_info)
+                if not os.path.exists(downloaded_path):
+                    files = [
+                        p
+                        for p in glob.glob(os.path.join(out_dir, "*"))
+                        if os.path.abspath(p) != os.path.abspath(cookie_file or "")
+                    ]
+                    if not files:
+                        return None, title, video_url
+                    downloaded_path = files[0]
 
-            return downloaded_path, title, video_url
+                return downloaded_path, title, video_url
+        except Exception as dl_err:
+            logging.warning(f"Media fayl yuklanmadi, havola qaytariladi: {dl_err}")
+            return None, title, video_url
     finally:
         if cookie_file and os.path.exists(cookie_file):
             try:
@@ -1123,4 +1144,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
