@@ -104,6 +104,7 @@ YOUTUBE_URL_PATTERN = re.compile(
     r"(https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/|live/)|youtu\.be/)[^\s]+)"
 )
 AUDIO_INTENT_KEYWORDS = ("audio", "mp3", "qo'shiq", "qoshiq", "musiqa", "ovoz")
+LINK_ONLY_KEYWORDS = ("silka", "havola", "link", "url")
 
 SUPPORTED_DOC_MIMES = {
     "application/pdf": "application/pdf",
@@ -278,13 +279,7 @@ def create_tools_for_user(user_id: int, generated_files: list):
     def set_reminder(
         remind_at_iso: str, reminder_text: str, is_daily: bool = False
     ) -> str:
-        """Belgilangan sana va vaqtga bir martalik yoki har kuni takrorlanadigan eslatma o'rnatadi.
-
-        Args:
-            remind_at_iso: Birinchi eslatma vaqti ISO formatda (YYYY-MM-DD HH:MM:SS), masalan '2026-11-24 08:30:00'.
-            reminder_text: Eslatma matni.
-            is_daily: Har kuni shu vaqtda takrorlanishi kerak bo'lsa True, bir martalik bo'lsa False.
-        """
+        """Belgilangan sana va vaqtga bir martalik yoki har kuni takrorlanadigan eslatma o'rnatadi."""
         try:
             dt = datetime.strptime(remind_at_iso, "%Y-%m-%d %H:%M:%S").replace(
                 tzinfo=LOCAL_TZ
@@ -344,11 +339,7 @@ def create_tools_for_user(user_id: int, generated_files: list):
         return "\n".join(result)
 
     def delete_reminder(reminder_id: int) -> str:
-        """Ko'rsatilgan ID raqami bo'yicha eslatmani bekor qiladi va bazadan o'chiradi.
-
-        Args:
-            reminder_id: O'chirilishi kerak bo'lgan eslatmaning ID raqami.
-        """
+        """Ko'rsatilgan ID raqami bo'yicha eslatmani bekor qiladi va bazadan o'chiradi."""
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.execute(
                 "SELECT message FROM reminders WHERE id = ? AND user_id = ? AND is_sent = 0",
@@ -367,13 +358,7 @@ def create_tools_for_user(user_id: int, generated_files: list):
         return f"Bekor qilindi: [ID: {reminder_id}] '{row[0]}' eslatmasi muvaffaqiyatli o'chirildi."
 
     def create_excel_file(filename: str, sheet_title: str, rows_json: str) -> str:
-        """Haqiqiy Excel (.xlsx) fayl yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi. Excel formulalarini (=SUM(A1:A5), =1+1) qo'llab-quvvatlaydi.
-
-        Args:
-            filename: Fayl nomi (masalan, 'hisobot.xlsx').
-            sheet_title: Excel varag'i nomi (masalan, 'Hisobot').
-            rows_json: Qatorlar ro'yxati JSON formatda. Masalan: '[["Nomi", "Miqdor"], ["Olma", 5], ["Jami", "=SUM(B2:B2)"]]'.
-        """
+        """Haqiqiy Excel (.xlsx) fayl yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi."""
         try:
             rows = json.loads(rows_json)
             wb = Workbook()
@@ -395,13 +380,7 @@ def create_tools_for_user(user_id: int, generated_files: list):
             return f"Excel fayl yaratishda xatolik: {e}"
 
     def create_word_file(filename: str, title: str, content: str) -> str:
-        """Haqiqiy Word (.docx) hujjat yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi.
-
-        Args:
-            filename: Fayl nomi (masalan, 'hujjat.docx').
-            title: Hujjat sarlavhasi.
-            content: Hujjatning asosiy matni (abzaslar yangi qatordan ajratiladi).
-        """
+        """Haqiqiy Word (.docx) hujjat yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi."""
         try:
             doc = Document()
             if title:
@@ -419,13 +398,7 @@ def create_tools_for_user(user_id: int, generated_files: list):
             return f"Word fayl yaratishda xatolik: {e}"
 
     def create_pdf_file(filename: str, title: str, content: str) -> str:
-        """Haqiqiy PDF (.pdf) hujjat yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi.
-
-        Args:
-            filename: Fayl nomi (masalan, 'hujjat.pdf').
-            title: PDF sarlavhasi.
-            content: PDF asosiy matni.
-        """
+        """Haqiqiy PDF (.pdf) hujjat yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi."""
         try:
             replacements = {
                 "‘": "'",
@@ -464,12 +437,7 @@ def create_tools_for_user(user_id: int, generated_files: list):
             return f"PDF fayl yaratishda xatolik: {e}"
 
     def create_text_file(filename: str, content: str) -> str:
-        """Haqiqiy TXT (.txt) matn fayli yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi.
-
-        Args:
-            filename: Fayl nomi (masalan, 'qaydlar.txt').
-            content: Fayl ichidagi matn.
-        """
+        """Haqiqiy TXT (.txt) matn fayli yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi."""
         try:
             safe_name = _safe_filename(filename, ".txt")
             generated_files.append((safe_name, content.encode("utf-8")))
@@ -629,61 +597,95 @@ async def reminder_scheduler():
 
 
 # --- 7. Yordamchi Funksiyalar (DOCX o'qish, TTS, YouTube va Javob/Fayl yuborish) ---
+def _prepare_youtube_cookie_file(out_dir: str) -> str | None:
+    """YOUTUBE_COOKIES muhit o'zgaruvchisidan vaqtinchalik Netscape cookies fayli yaratadi."""
+    raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
+    if not raw_cookies:
+        return None
+
+    cookie_path = os.path.join(out_dir, "youtube_cookies.txt")
+    with open(cookie_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(raw_cookies.replace("\r\n", "\n") + "\n")
+    return cookie_path
+
+
 def download_youtube_media(
-    query_or_url: str, audio_only: bool, out_dir: str
-) -> tuple[str, str, str]:
-    """YouTube havolasi yoki qidiruv so'zi bo'yicha media yuklaydi va (fayl_yoli, sarlavha, havola) qaytaradi."""
+    query_or_url: str, audio_only: bool, out_dir: str, link_only: bool = False
+) -> tuple[str | None, str, str]:
+    """YouTube havolasi yoki qidiruv so'zi bo'yicha media (yoki faqat havola) oladi."""
     out_tmpl = os.path.join(out_dir, "%(title).60s.%(ext)s")
-    target = (
-        query_or_url
-        if YOUTUBE_URL_PATTERN.search(query_or_url)
-        else f"ytsearch1:{query_or_url}"
-    )
+    is_direct_url = bool(YOUTUBE_URL_PATTERN.search(query_or_url))
+    target = query_or_url if is_direct_url else f"ytsearch1:{query_or_url}"
+    cookie_file = _prepare_youtube_cookie_file(out_dir)
 
-    if audio_only:
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "outtmpl": out_tmpl,
-            "noplaylist": True,
-            "default_search": "ytsearch",
-            "quiet": True,
-            "no_warnings": True,
-        }
-    else:
-        ydl_opts = {
-            "format": "best[ext=mp4][height>=360]/best[height>=360]/best",
-            "outtmpl": out_tmpl,
-            "noplaylist": True,
-            "default_search": "ytsearch",
-            "quiet": True,
-            "no_warnings": True,
-        }
+    base_opts = {
+        "noplaylist": True,
+        "default_search": "ytsearch",
+        "quiet": True,
+        "no_warnings": True,
+    }
+    if cookie_file:
+        base_opts["cookiefile"] = cookie_file
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(target, download=True)
-        if isinstance(info, dict) and "entries" in info and info["entries"]:
-            info = info["entries"][0]
+    try:
+        # 1-bosqich: Avval video ma'lumotlari va haqiqiy YouTube havolasini olamiz
+        info_opts = {**base_opts, "skip_download": True}
+        with yt_dlp.YoutubeDL(info_opts) as ydl:
+            info = ydl.extract_info(target, download=False)
+            if isinstance(info, dict) and "entries" in info and info["entries"]:
+                info = info["entries"][0]
 
-        if not isinstance(info, dict):
-            raise RuntimeError("YouTube qidiruvidan natija qaytmadi.")
+            if not isinstance(info, dict):
+                raise RuntimeError("YouTube qidiruvidan natija qaytmadi.")
 
-        title = info.get("title") or "YouTube Media"
-        video_url = info.get("webpage_url") or (
-            query_or_url if YOUTUBE_URL_PATTERN.search(query_or_url) else ""
-        )
-        downloaded_path = ydl.prepare_filename(info)
+            title = info.get("title") or "YouTube Media"
+            video_id = info.get("id")
+            video_url = (
+                info.get("webpage_url")
+                or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
+                or (query_or_url if is_direct_url else "")
+            )
 
-        if not os.path.exists(downloaded_path):
-            files = glob.glob(os.path.join(out_dir, "*"))
-            if not files:
-                raise FileNotFoundError(
-                    f"Server yuklay olmadi (ehtimol YouTube bloklagan). Havola: {video_url}"
-                    if video_url
-                    else "Server yuklay olmadi (ehtimol YouTube bloklagan)."
-                )
-            downloaded_path = files[0]
+        if link_only:
+            return None, title, video_url
 
-        return downloaded_path, title, video_url
+        # 2-bosqich: Media faylni yuklab olamiz
+        if audio_only:
+            dl_opts = {**base_opts, "format": "bestaudio/best", "outtmpl": out_tmpl}
+        else:
+            dl_opts = {
+                **base_opts,
+                "format": "best[ext=mp4][height>=360]/best[height>=360]/best",
+                "outtmpl": out_tmpl,
+            }
+
+        with yt_dlp.YoutubeDL(dl_opts) as ydl:
+            dl_info = ydl.extract_info(video_url or target, download=True)
+            if isinstance(dl_info, dict) and "entries" in dl_info and dl_info["entries"]:
+                dl_info = dl_info["entries"][0]
+
+            downloaded_path = ydl.prepare_filename(dl_info)
+            if not os.path.exists(downloaded_path):
+                files = [
+                    p
+                    for p in glob.glob(os.path.join(out_dir, "*"))
+                    if os.path.abspath(p) != os.path.abspath(cookie_file or "")
+                ]
+                if not files:
+                    raise FileNotFoundError(
+                        f"Server faylni yuklay olmadi, lekin havola topildi:\n🔗 {video_url}"
+                        if video_url
+                        else "Server faylni yuklay olmadi."
+                    )
+                downloaded_path = files[0]
+
+            return downloaded_path, title, video_url
+    finally:
+        if cookie_file and os.path.exists(cookie_file):
+            try:
+                os.remove(cookie_file)
+            except OSError:
+                pass
 
 
 def extract_text_from_docx(doc_bytes: bytes) -> str:
@@ -979,6 +981,9 @@ async def handle_text(message: Message):
             "qo'shiq",
             "qoshiq",
             "musiqa",
+            "silka",
+            "havola",
+            "link",
         )
     )
 
@@ -987,7 +992,7 @@ async def handle_text(message: Message):
             yt_target = yt_match.group(1)
         else:
             clean_query = re.sub(
-                r"\b(youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|musiqa|audio|mp3|topib|top|yuklab|yuklaver|yukla|tashlab|tashla|ber|bersang|qilib)\b",
+                r"\b(youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|qoʻshigʻini|musiqa|audio|mp3|topib|top|yuklab|yuklaver|yukla|tashlab|tashla|ber|bersang|bersinda|qilib|shuni|silkasini|silka|havolasini|havola|linkini|link|ha|ham)\b",
                 " ",
                 lower_text,
             )
@@ -995,26 +1000,46 @@ async def handle_text(message: Message):
             yt_target = clean_query or text_body
 
         audio_only = any(k in lower_text for k in AUDIO_INTENT_KEYWORDS)
+        link_only = any(k in lower_text for k in LINK_ONLY_KEYWORDS) and not any(
+            k in lower_text for k in ("yukl", "mp3", "audio", "video", "fayl")
+        )
 
         status_msg = await message.answer(
-            f"Janob, '{yt_target}' bo‘yicha audio qidirilib yuklanmoqda, biroz kuting..."
-            if audio_only
-            else f"Janob, '{yt_target}' bo‘yicha video qidirilib yuklanmoqda, biroz kuting..."
+            f"Janob, '{yt_target}' bo‘yicha YouTube havolasi qidirilmoqda..."
+            if link_only
+            else (
+                f"Janob, '{yt_target}' bo‘yicha audio va havola qidirilmoqda, biroz kuting..."
+                if audio_only
+                else f"Janob, '{yt_target}' bo‘yicha video va havola qidirilmoqda, biroz kuting..."
+            )
         )
         await bot.send_chat_action(
             chat_id=message.chat.id,
-            action="upload_voice" if audio_only else "upload_video",
+            action="typing" if link_only else ("upload_voice" if audio_only else "upload_video"),
         )
 
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 file_path, title, video_url = await asyncio.to_thread(
-                    download_youtube_media, yt_target, audio_only, tmp_dir
+                    download_youtube_media, yt_target, audio_only, tmp_dir, link_only
                 )
+
+                if link_only or not file_path:
+                    await status_msg.edit_text(
+                        f"🎬 {title}\n🔗 Havola: {video_url}"
+                    )
+                    save_message_to_db(user_id, "user", text_body)
+                    save_message_to_db(
+                        user_id,
+                        "model",
+                        f"YouTube’dan '{title}' havolasi topildi: {video_url}",
+                    )
+                    return
+
                 file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                url_part = f"\n🔗 Havola: {video_url}" if video_url else ""
 
                 if file_size_mb > 49.5:
-                    url_part = f"\n\n🔗 Havola: {video_url}" if video_url else ""
                     await status_msg.edit_text(
                         f"Janob, '{title}' fayli hajmi ({file_size_mb:.1f} MB) Telegram botining 50 MB cheklovidan katta, "
                         f"shuning uchun faylni jo‘nata olmadim. Quyidagi havola orqali ko‘rishingiz mumkin:{url_part}"
@@ -1024,22 +1049,27 @@ async def handle_text(message: Message):
                 media_file = FSInputFile(file_path)
                 if audio_only:
                     await message.answer_audio(
-                        audio=media_file, title=title, caption=f"🎵 {title}"
+                        audio=media_file,
+                        title=title,
+                        caption=f"🎵 {title}{url_part}",
                     )
                 else:
-                    await message.answer_video(video=media_file, caption=f"🎬 {title}")
+                    await message.answer_video(
+                        video=media_file,
+                        caption=f"🎬 {title}{url_part}",
+                    )
 
                 await status_msg.delete()
                 save_message_to_db(user_id, "user", text_body)
                 save_message_to_db(
                     user_id,
                     "model",
-                    f"YouTube’dan '{title}' ({'audio' if audio_only else 'video'}) topilib yuklab yuborildi.",
+                    f"YouTube’dan '{title}' ({'audio' if audio_only else 'video'}) va havolasi yuborildi: {video_url}",
                 )
         except Exception as e:
             logging.exception("YouTube yuklashda xatolik:")
             await status_msg.edit_text(
-                f"Uzr so‘rayman, Janob. YouTube’dan yuklashda xatolik yuz berdi: {e}"
+                f"Uzr so‘rayman, Janob. {e}"
             )
         return
 
@@ -1093,4 +1123,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main()) 
