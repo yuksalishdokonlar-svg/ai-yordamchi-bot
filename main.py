@@ -74,7 +74,6 @@ Qoidalar:
 FALLBACK_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
 ]
 TTS_VOICE = "uz-UZ-SardorNeural"
 DB_PATH = "jarvis_memory.db"
@@ -1117,6 +1116,8 @@ async def send_message_with_fallback(
                 err_str = str(e)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     quota_hit = True
+                elif "404" in err_str or "NOT_FOUND" in err_str:
+                    logging.warning(f"{model_id} topilmadi (404), keyingi modelga o'tilmoqda...")
                 else:
                     all_keys_exhausted_for_current = False
                 logging.warning(
@@ -1793,7 +1794,8 @@ async def main():
     init_db()
     await start_web_server()
     asyncio.create_task(reminder_scheduler())
-    await dp.start_polling(bot)
+    await asyncio.sleep(1.5)
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
