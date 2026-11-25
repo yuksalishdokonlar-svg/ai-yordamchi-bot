@@ -72,8 +72,9 @@ Qoidalar:
 """
 
 FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.0-flash",
 ]
 TTS_VOICE = "uz-UZ-SardorNeural"
 DB_PATH = "jarvis_memory.db"
@@ -1091,7 +1092,7 @@ async def send_message_with_fallback(
 
     for api_key in API_KEYS_POOL:
         key_client = genai.Client(api_key=api_key)
-        all_keys_exhausted_for_current = True
+        retry_next_key = True
 
         for model_id in FALLBACK_MODELS:
             generated_files: list[tuple[str, bytes]] = []
@@ -1119,14 +1120,14 @@ async def send_message_with_fallback(
                 elif "404" in err_str or "NOT_FOUND" in err_str:
                     logging.warning(f"{model_id} topilmadi (404), keyingi modelga o'tilmoqda...")
                 else:
-                    all_keys_exhausted_for_current = False
+                    retry_next_key = False
                 logging.warning(
                     f"{model_id} vaqtincha javob bermadi ({e}), keyingi zaxira modelga o'tilmoqda..."
                 )
                 await asyncio.sleep(1.0)
                 continue
 
-        if not all_keys_exhausted_for_current:
+        if not retry_next_key:
             break
 
     if quota_hit:
