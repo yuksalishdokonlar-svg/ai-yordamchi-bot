@@ -48,18 +48,16 @@ Qoidalar:
 - Foydalanuvchiga hurmat bilan 'Janob' deb murojaat qil.
 - Javoblarni qisqa, lo'nda va texnik jihatdan aniq ber.
 - Ovozli javoblar uchun ortiqcha belgilar (*, #, _) ishlatma, chunki matn ovozga o'giriladi.
-- Jonli ma'lumotlar (bugungi ob-havo, yangiliklar, valyuta kurslari, sport natijalari, hozirgi soat/sana holatidagi voqealar) so'ralganda Google Search natijalariga tayanib eng so'nggi faktlarni keltir.
-- QAT'IY XAVFSIZLIK QOIDASI: O'zbekiston Respublikasi qonunchiligida taqiqlangan ekstremistik, terroristik, radikal va aqidaparastlik g'oyalarini targ'ib qiluvchi ma'ruzalar, tashkilotlar, kanallar va videolarni HECH QACHON qidirmagin, topmagin, tavsiya qilmagin va yuklab bermagin. Faqat rasmiy va qonuniy manbalarga ruxsat beriladi.
+- Jonli ma'lumotlar (ob-havo, yangiliklar, valyuta kurslari, sport natijalari) so'ralganda Google Search natijalariga tayanib eng so'nggi faktlarni keltir.
 - Hujjatlar (PDF, Word yoki matnli fayllar) yuborilganda ularning asosiy mazmuni, raqamlar va muhim xulosalarini tizimli ravishda chiqar.
 - Agar foydalanuvchi Excel (.xlsx), Word (.docx), PDF (.pdf) yoki TXT (.txt) fayl tayyorlab berishni so'rasa, HECH QACHON soxta havola yoki '[Yuklab olish: ...]' deb yozma! Buning o'rniga tegishli fayl yaratish funksiyasini (create_excel_file, create_word_file, create_pdf_file yoki create_text_file) chaqir.
-- Agar foydalanuvchi o'zining YouTube akkauntidagi videolarni (keyinroq ko'rish, yoqtirilganlar, obunalar, tarix) ko'rishni yoki yuklab olishni so'rasa, tegishli YouTube akkaunt funksiyalaridan (get_my_youtube_videos yoki download_from_my_youtube) foydalan.
 - O'zbek tilida ravon javob ber.
 """
 
 FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
 ]
 TTS_VOICE = "uz-UZ-SardorNeural"
@@ -102,100 +100,8 @@ FILE_GEN_KEYWORDS = (
     "hujjat tayyorla",
 )
 
-# Shaxsiy YouTube akkaunt ma'lumotlari kalit so'zlari
-MY_YT_KEYWORDS = (
-    "akaunt",
-    "akkaunt",
-    "profil",
-    "keyinroq",
-    "watch later",
-    "yoqtirgan",
-    "yoqtirilgan",
-    "like",
-    "obuna",
-    "subscription",
-    "tarix",
-    "history",
-    "pleylist",
-    "playlist",
-    "kanalim",
-    "saqlangan",
-)
-
-# O'zbekiston Respublikasida taqiqlangan ekstremistik/terroristik tashkilotlar, oqimlar va ma'ruzalar filtri
-UZB_PROHIBITED_KEYWORDS = (
-    "hizb ut-tahrir",
-    "hizb ut tahrir",
-    "hizbut tahrir",
-    "hizbut-tahrir",
-    "akromiylar",
-    "akromiya",
-    "vahhobiylik",
-    "vahobiy",
-    "jihodchilar",
-    "jihod",
-    "jihad",
-    "katibat",
-    "tavhid va jihod",
-    "tavhid va jihad",
-    "islomiy davlat",
-    "daish",
-    "daesh",
-    "isis",
-    "isil",
-    "al-qoida",
-    "al qoida",
-    "al-qaeda",
-    "turkiston islom",
-    "o'zbekiston islomiy harakati",
-    "ozbekiston islomiy harakati",
-    "imom buxoriy katibasi",
-    "jabhat an-nusra",
-    "nusra front",
-    "nurcular",
-    "nurchilar",
-    "tablig'i jamoat",
-    "tablighi jamaat",
-    "abu saloh",
-    "abu salox",
-    "abdulloh zufar",
-    "sodiq samarqandiy",
-    "mahmud abdulmo'min",
-    "mahmud abdulmomin",
-    "rashod qori",
-    "obid qori",
-    "tohir yo'ldosh",
-    "tohir yoldosh",
-    "juma namanganiy",
-    "ekstremiz",
-    "extremis",
-    "terror",
-    "aqidaparast",
-    "takfir",
-)
-
 YOUTUBE_URL_PATTERN = re.compile(
-    r"(https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/|live/|playlist\?list=|@)|youtu\.be/)[^\s]+)"
-)
-YT_ACTION_KEYWORDS = (
-    "top",
-    "yukl",
-    "tort",
-    "skachat",
-    "tashla",
-    "ber",
-    "qo'y",
-    "qoy",
-    "mp3",
-    "mp4",
-    "audio",
-    "video",
-    "qo'shiq",
-    "qoshiq",
-    "musiqa",
-    "silka",
-    "havola",
-    "link",
+    r"(https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/|live/)|youtu\.be/)[^\s]+)"
 )
 AUDIO_INTENT_KEYWORDS = ("audio", "mp3", "qo'shiq", "qoshiq", "musiqa", "ovoz")
 LINK_ONLY_KEYWORDS = ("silka", "havola", "link", "url")
@@ -359,257 +265,7 @@ def clear_history_in_db(user_id: int):
         conn.commit()
 
 
-# --- 5. Taqiqlangan Ma'ruzalar / Kanallar Filtri va YouTube Funksiyalari ---
-def _get_custom_blocked_channels() -> tuple[str, ...]:
-    raw = os.getenv("BLOCKED_YT_CHANNELS", "")
-    return tuple(c.strip().lower() for c in raw.split(",") if c.strip())
-
-
-def is_prohibited_uzb_content(
-    text: str, channel: str = "", description: str = ""
-) -> bool:
-    """O'zbekiston Respublikasida taqiqlangan ma'ruzalar, oqimlar va bloklangan kanallarni aniqlaydi."""
-    normalized = f"{text} {channel} {description}".lower()
-    normalized = normalized.replace("ʻ", "'").replace("’", "'").replace("‘", "'")
-
-    if any(bad in normalized for bad in UZB_PROHIBITED_KEYWORDS):
-        return True
-
-    custom_blocked = _get_custom_blocked_channels()
-    if custom_blocked and any(ch in normalized for ch in custom_blocked):
-        return True
-
-    return False
-
-
-def _prepare_youtube_cookie_file(out_dir: str) -> str | None:
-    """YOUTUBE_COOKIES matnidagi probellarni Netscape Tab (\t) formatiga tuzatib fayl yaratadi."""
-    raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
-    if not raw_cookies:
-        return None
-
-    fixed_lines = ["# Netscape HTTP Cookie File"]
-    for raw_line in raw_cookies.replace("\r\n", "\n").split("\n"):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        if "\t" in line:
-            parts = line.split("\t")
-        else:
-            parts = line.split(None, 6)
-
-        if len(parts) == 7:
-            fixed_lines.append("\t".join(parts))
-
-    if len(fixed_lines) <= 1:
-        return None
-
-    cookie_path = os.path.join(out_dir, "youtube_cookies.txt")
-    with open(cookie_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(fixed_lines) + "\n")
-    return cookie_path
-
-
-def _resolve_yt_account_feed(section: str) -> tuple[str, str]:
-    """Bo'lim nomini yt-dlp maxsus feed identifikatoriga aylantiradi."""
-    s = (section or "").lower().strip()
-    if any(k in s for k in ("like", "yoqtir")):
-        return ":ytliked", "Yoqtirilgan videolar (Liked Videos)"
-    if any(k in s for k in ("sub", "obuna")):
-        return ":ytsubs", "Obunalar lentasi (Subscriptions)"
-    if any(k in s for k in ("hist", "tarix", "ko'rgan", "korgan")):
-        return ":ythistory", "Ko'rish tarixi (History)"
-    if any(k in s for k in ("rec", "tavsiya", "bosh sahifa", "home")):
-        return ":ytrec", "Tavsiya etilgan videolar"
-    return ":ytwatchlater", "Keyinroq ko'rish (Watch Later)"
-
-
-def fetch_my_youtube_entries(
-    section: str = "watch_later", limit: int = 10
-) -> tuple[str, list[dict]]:
-    """Foydalanuvchining shaxsiy YouTube akkauntidagi videolar ro'yxatini qaytaradi."""
-    feed_target, feed_label = _resolve_yt_account_feed(section)
-    limit = max(1, min(int(limit), 25))
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        cookie_file = _prepare_youtube_cookie_file(tmp_dir)
-        if not cookie_file:
-            raise RuntimeError(
-                "YOUTUBE_COOKIES topilmadi. Shaxsiy akkaunt ma'lumotlari uchun Render’da YOUTUBE_COOKIES sozlangan bo‘lishi kerak."
-            )
-
-        opts = {
-            "cookiefile": cookie_file,
-            "extract_flat": "in_playlist",
-            "playlistend": limit + 5,
-            "skip_download": True,
-            "quiet": True,
-            "no_warnings": True,
-        }
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(feed_target, download=False)
-
-        entries = info.get("entries") if isinstance(info, dict) else None
-        if not entries:
-            return feed_label, []
-
-        results = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            title = entry.get("title") or "Nomsiz video"
-            uploader = entry.get("uploader") or entry.get("channel") or ""
-            desc = entry.get("description") or ""
-
-            if is_prohibited_uzb_content(title, uploader, desc):
-                continue
-
-            vid_id = entry.get("id") or ""
-            raw_url = entry.get("url") or entry.get("webpage_url") or ""
-            if raw_url.startswith("http"):
-                url = raw_url
-            elif vid_id:
-                url = f"https://www.youtube.com/watch?v={vid_id}"
-            else:
-                url = ""
-
-            results.append(
-                {
-                    "index": len(results) + 1,
-                    "title": title,
-                    "uploader": uploader,
-                    "url": url,
-                }
-            )
-            if len(results) >= limit:
-                break
-
-        return feed_label, results
-
-
-def download_youtube_media(
-    query_or_url: str, audio_only: bool, out_dir: str, link_only: bool = False
-) -> tuple[str | None, str, str]:
-    """YouTube havolasi yoki qidiruv so'zi bo'yicha xavfsiz media va haqiqiy havola oladi."""
-    if is_prohibited_uzb_content(query_or_url):
-        raise PermissionError(
-            "O‘zbekiston Respublikasi qonunchiligida taqiqlangan ma’ruzalar, ekstremistik oqimlar "
-            "yoki bloklangan kanal va videolarni qidira olmayman hamda yuklab bera olmayman."
-        )
-
-    out_tmpl = os.path.join(out_dir, "%(title).60s.%(ext)s")
-    is_direct_url = bool(YOUTUBE_URL_PATTERN.search(query_or_url))
-    target = query_or_url if is_direct_url else f"ytsearch5:{query_or_url}"
-    cookie_file = _prepare_youtube_cookie_file(out_dir)
-
-    base_opts = {
-        "noplaylist": True,
-        "default_search": "ytsearch",
-        "quiet": True,
-        "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
-    }
-    if cookie_file:
-        base_opts["cookiefile"] = cookie_file
-
-    try:
-        # 1-bosqich: Natijalarni olib, O'zbekiston Respublikasida taqiqlangan ma'ruza/kanallarni filtrlaymiz
-        flat_opts = {**base_opts, "extract_flat": "in_playlist", "skip_download": True}
-        with yt_dlp.YoutubeDL(flat_opts) as ydl:
-            info = ydl.extract_info(target, download=False)
-            candidates = (
-                [e for e in info["entries"] if isinstance(e, dict)]
-                if isinstance(info, dict) and "entries" in info and info["entries"]
-                else ([info] if isinstance(info, dict) else [])
-            )
-
-            if not candidates:
-                raise RuntimeError("YouTube qidiruvidan natija qaytmadi.")
-
-            selected = None
-            for cand in candidates:
-                c_title = cand.get("title") or ""
-                c_channel = cand.get("uploader") or cand.get("channel") or ""
-                c_desc = cand.get("description") or ""
-                if not is_prohibited_uzb_content(c_title, c_channel, c_desc):
-                    selected = cand
-                    break
-
-            if not selected:
-                raise PermissionError(
-                    "Topilgan kanal yoki video O‘zbekiston Respublikasida taqiqlangan manbalar ro‘yxatiga kiradi."
-                )
-
-            title = selected.get("title") or "YouTube Media"
-            video_id = selected.get("id")
-            raw_url = selected.get("url") or selected.get("webpage_url") or ""
-            if raw_url.startswith("http"):
-                video_url = raw_url
-            elif video_id:
-                video_url = f"https://www.youtube.com/watch?v={video_id}"
-            else:
-                video_url = query_or_url if is_direct_url else ""
-
-        if link_only:
-            return None, title, video_url
-
-        # 2-bosqich: Media faylni yuklab olish (Telegram 50 MB limitiga mos sifatda)
-        if audio_only:
-            dl_opts = {
-                **base_opts,
-                "format": "bestaudio[ext=m4a]/bestaudio/best",
-                "outtmpl": out_tmpl,
-            }
-        else:
-            dl_opts = {
-                **base_opts,
-                "format": "best[ext=mp4][filesize<48M]/best[ext=mp4][height<=720]/best[height<=480]/best",
-                "outtmpl": out_tmpl,
-            }
-
-        try:
-            with yt_dlp.YoutubeDL(dl_opts) as ydl:
-                dl_info = ydl.extract_info(video_url or target, download=True)
-                if isinstance(dl_info, dict) and "entries" in dl_info and dl_info["entries"]:
-                    dl_info = dl_info["entries"][0]
-
-                full_title = dl_info.get("title") or title
-                full_channel = dl_info.get("uploader") or dl_info.get("channel") or ""
-                full_desc = dl_info.get("description") or ""
-                if is_prohibited_uzb_content(full_title, full_channel, full_desc):
-                    raise PermissionError(
-                        "Ushbu ma’ruza, kanal yoki video O‘zbekiston Respublikasida taqiqlangan, yuklash bekor qilindi."
-                    )
-
-                title = full_title
-                downloaded_path = ydl.prepare_filename(dl_info)
-                if not os.path.exists(downloaded_path):
-                    files = [
-                        p
-                        for p in glob.glob(os.path.join(out_dir, "*"))
-                        if os.path.abspath(p) != os.path.abspath(cookie_file or "")
-                    ]
-                    if not files:
-                        return None, title, video_url
-                    downloaded_path = files[0]
-
-                return downloaded_path, title, video_url
-        except PermissionError:
-            raise
-        except Exception as dl_err:
-            logging.warning(f"Media fayl yuklanmadi, havola qaytariladi: {dl_err}")
-            return None, title, video_url
-    finally:
-        if cookie_file and os.path.exists(cookie_file):
-            try:
-                os.remove(cookie_file)
-            except OSError:
-                pass
-
-
-# --- 6. Eslatmalar, YouTube Akkaunt va Fayl Yaratish (Gemini Function Calling Tools) ---
+# --- 5. Eslatmalar va Fayl Yaratish (Gemini Function Calling Tools) ---
 def _safe_filename(filename: str, default_ext: str) -> str:
     clean = re.sub(r'[\\/*?:"<>|]', "_", filename.strip())
     if not clean:
@@ -619,11 +275,7 @@ def _safe_filename(filename: str, default_ext: str) -> str:
     return clean
 
 
-def create_tools_for_user(
-    user_id: int,
-    generated_files: list,
-    yt_download_requests: list,
-):
+def create_tools_for_user(user_id: int, generated_files: list):
     def set_reminder(
         remind_at_iso: str, reminder_text: str, is_daily: bool = False
     ) -> str:
@@ -704,54 +356,6 @@ def create_tools_for_user(
             conn.commit()
 
         return f"Bekor qilindi: [ID: {reminder_id}] '{row[0]}' eslatmasi muvaffaqiyatli o'chirildi."
-
-    def get_my_youtube_videos(section: str = "watch_later", limit: int = 10) -> str:
-        """Foydalanuvchining shaxsiy YouTube akkauntidan videolar ro'yxatini oladi."""
-        try:
-            feed_label, items = fetch_my_youtube_entries(section=section, limit=limit)
-            if not items:
-                return f"YouTube akkauntingizning '{feed_label}' bo‘limida ruxsat etilgan videolar topilmadi."
-
-            lines = [f"YouTube akkauntingiz — {feed_label} (oxirgi {len(items)} ta):"]
-            for item in items:
-                channel_part = f" ({item['uploader']})" if item["uploader"] else ""
-                lines.append(
-                    f"{item['index']}. {item['title']}{channel_part}\n   Havola: {item['url']}"
-                )
-            return "\n".join(lines)
-        except Exception as e:
-            return f"YouTube akkaunt ma'lumotlarini olishda xatolik: {e}"
-
-    def download_from_my_youtube(
-        section: str = "watch_later",
-        index: int = 1,
-        audio_only: bool = False,
-    ) -> str:
-        """Foydalanuvchining shaxsiy YouTube akkauntidagi ko'rsatilgan bo'lim va tartib raqamidagi videoni yuklab yuborish navbatiga qo'shadi."""
-        try:
-            idx = max(1, int(index))
-            feed_label, items = fetch_my_youtube_entries(section=section, limit=idx)
-            if len(items) < idx:
-                return f"Xatolik: '{feed_label}' bo‘limida {idx}-raqamli video topilmadi."
-
-            chosen = items[idx - 1]
-            if not chosen["url"]:
-                return f"Xatolik: '{chosen['title']}' videosining havolasi topilmadi."
-
-            yt_download_requests.append(
-                {
-                    "url": chosen["url"],
-                    "title": chosen["title"],
-                    "audio_only": bool(audio_only),
-                }
-            )
-            media_type = "audio" if audio_only else "video"
-            return (
-                f"'{feed_label}' ro‘yxatidagi #{idx} ('{chosen['title']}') {media_type} sifatida "
-                f"yuklash navbatiga qo‘shildi. Havola: {chosen['url']}"
-            )
-        except Exception as e:
-            return f"Akkauntdan video tanlashda xatolik: {e}"
 
     def create_excel_file(filename: str, sheet_title: str, rows_json: str) -> str:
         """Haqiqiy Excel (.xlsx) fayl yaratadi va foydalanuvchiga yuborish uchun tayyorlaydi."""
@@ -845,8 +449,6 @@ def create_tools_for_user(
         set_reminder,
         list_reminders,
         delete_reminder,
-        get_my_youtube_videos,
-        download_from_my_youtube,
         create_excel_file,
         create_word_file,
         create_pdf_file,
@@ -854,53 +456,42 @@ def create_tools_for_user(
     ]
 
 
-def should_enable_custom_tools(text: str) -> bool:
-    """So'rov eslatma, fayl yaratish yoki shaxsiy YouTube akkauntga oid ekanligini tekshiradi."""
+def should_enable_tools(text: str) -> bool:
+    """So'rov eslatma yoki fayl yaratishga oid ekanligini tekshiradi."""
     lower_text = text.lower()
-    return (
-        any(k in lower_text for k in REMINDER_KEYWORDS)
-        or any(k in lower_text for k in FILE_GEN_KEYWORDS)
-        or any(k in lower_text for k in MY_YT_KEYWORDS)
+    return any(k in lower_text for k in REMINDER_KEYWORDS) or any(
+        k in lower_text for k in FILE_GEN_KEYWORDS
     )
 
 
-def build_chat_config(user_id: int, custom_tools: list | None = None):
+def build_chat_config(user_id: int, tools_list: list | None = None):
     now_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S (%A)")
     dynamic_instruction = (
         f"{JARVIS_BASE_INSTRUCTION}\n"
         f"Hozirgi aniq mahalliy sana va vaqt ({TIMEZONE_STR}): {now_str}. "
-        f"Bugungi kun va soat holatidagi savollarga shu vaqt hamda Google Search asosida javob ber."
-    )
-
-    active_tools = (
-        custom_tools
-        if custom_tools
-        else [types.Tool(google_search=types.GoogleSearch())]
+        f"Nisbiy vaqtlarni shu vaqt asosida hisobla."
     )
 
     return types.GenerateContentConfig(
         system_instruction=dynamic_instruction,
-        tools=active_tools,
+        tools=tools_list if tools_list else None,
         temperature=0.7,
     )
 
 
 async def send_message_with_fallback(
-    user_id: int, message_content: Any, use_custom_tools: bool = False
+    user_id: int, message_content: Any, use_tools: bool = False
 ):
-    """Zaxira modellar ro'yxati bo'yicha jonli qidiruv yoki maxsus funksiyalar bilan javob oladi."""
+    """Zaxira modellar ro'yxati bo'yicha javob va yaratilgan fayllarni oladi."""
     history = load_history_from_db(user_id)
     last_error = None
 
     for model_id in FALLBACK_MODELS:
         generated_files: list[tuple[str, bytes]] = []
-        yt_download_requests: list[dict] = []
-        custom_tools = (
-            create_tools_for_user(user_id, generated_files, yt_download_requests)
-            if use_custom_tools
-            else None
+        tools_list = (
+            create_tools_for_user(user_id, generated_files) if use_tools else None
         )
-        config = build_chat_config(user_id, custom_tools=custom_tools)
+        config = build_chat_config(user_id, tools_list=tools_list)
 
         try:
             chat = client.chats.create(
@@ -909,7 +500,7 @@ async def send_message_with_fallback(
                 config=config,
             )
             response = await asyncio.to_thread(chat.send_message, message_content)
-            return response, generated_files, yt_download_requests
+            return response, generated_files
         except Exception as e:
             last_error = e
             logging.warning(
@@ -949,7 +540,7 @@ def format_response_with_sources(response) -> str:
     return text
 
 
-# --- 7. Orqa fon Eslatma Tekshiruvchisi ---
+# --- 6. Orqa fon Eslatma Tekshiruvchisi ---
 async def reminder_scheduler():
     while True:
         try:
@@ -1005,7 +596,119 @@ async def reminder_scheduler():
         await asyncio.sleep(15)
 
 
-# --- 8. Matn, Ovoz va Fayl Yuborish Yordamchilari ---
+# --- 7. Yordamchi Funksiyalar (DOCX o'qish, TTS, YouTube va Javob/Fayl yuborish) ---
+def _prepare_youtube_cookie_file(out_dir: str) -> str | None:
+    """YOUTUBE_COOKIES matnidagi probellarni Netscape Tab (\t) formatiga tuzatib fayl yaratadi."""
+    raw_cookies = os.getenv("YOUTUBE_COOKIES", "").strip()
+    if not raw_cookies:
+        return None
+
+    fixed_lines = ["# Netscape HTTP Cookie File"]
+    for raw_line in raw_cookies.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if "\t" in line:
+            parts = line.split("\t")
+        else:
+            # Telefondan nusxalanganda Tab o'rniga probel tushib qolgan holatni tuzatish
+            parts = line.split(None, 6)
+
+        if len(parts) == 7:
+            fixed_lines.append("\t".join(parts))
+
+    if len(fixed_lines) <= 1:
+        return None
+
+    cookie_path = os.path.join(out_dir, "youtube_cookies.txt")
+    with open(cookie_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(fixed_lines) + "\n")
+    return cookie_path
+
+
+def download_youtube_media(
+    query_or_url: str, audio_only: bool, out_dir: str, link_only: bool = False
+) -> tuple[str | None, str, str]:
+    """YouTube havolasi yoki qidiruv so'zi bo'yicha media va haqiqiy havola oladi."""
+    out_tmpl = os.path.join(out_dir, "%(title).60s.%(ext)s")
+    is_direct_url = bool(YOUTUBE_URL_PATTERN.search(query_or_url))
+    target = query_or_url if is_direct_url else f"ytsearch1:{query_or_url}"
+    cookie_file = _prepare_youtube_cookie_file(out_dir)
+
+    base_opts = {
+        "noplaylist": True,
+        "default_search": "ytsearch",
+        "quiet": True,
+        "no_warnings": True,
+    }
+    if cookie_file:
+        base_opts["cookiefile"] = cookie_file
+
+    try:
+        # 1-bosqich: Video sahifasini ochmasdan tezda sarlavha va haqiqiy YouTube havolasini olamiz
+        flat_opts = {**base_opts, "extract_flat": "in_playlist", "skip_download": True}
+        with yt_dlp.YoutubeDL(flat_opts) as ydl:
+            info = ydl.extract_info(target, download=False)
+            if isinstance(info, dict) and "entries" in info and info["entries"]:
+                info = info["entries"][0]
+
+            if not isinstance(info, dict):
+                raise RuntimeError("YouTube qidiruvidan natija qaytmadi.")
+
+            title = info.get("title") or "YouTube Media"
+            video_id = info.get("id")
+            raw_url = info.get("url") or info.get("webpage_url") or ""
+            if raw_url.startswith("http"):
+                video_url = raw_url
+            elif video_id:
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+            else:
+                video_url = query_or_url if is_direct_url else ""
+
+        if link_only:
+            return None, title, video_url
+
+        # 2-bosqich: Media faylni yuklab olish (agar bloklansa ham video_url saqlanib qoladi)
+        if audio_only:
+            dl_opts = {**base_opts, "format": "bestaudio/best", "outtmpl": out_tmpl}
+        else:
+            dl_opts = {
+                **base_opts,
+                "format": "best[ext=mp4][height>=360]/best[height>=360]/best",
+                "outtmpl": out_tmpl,
+            }
+
+        try:
+            with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                dl_info = ydl.extract_info(video_url or target, download=True)
+                if isinstance(dl_info, dict) and "entries" in dl_info and dl_info["entries"]:
+                    dl_info = dl_info["entries"][0]
+
+                title = dl_info.get("title") or title
+                downloaded_path = ydl.prepare_filename(dl_info)
+                if not os.path.exists(downloaded_path):
+                    files = [
+                        p
+                        for p in glob.glob(os.path.join(out_dir, "*"))
+                        if os.path.abspath(p) != os.path.abspath(cookie_file or "")
+                    ]
+                    if not files:
+                        return None, title, video_url
+                    downloaded_path = files[0]
+
+                return downloaded_path, title, video_url
+        except Exception as dl_err:
+            logging.warning(f"Media fayl yuklanmadi, havola qaytariladi: {dl_err}")
+            return None, title, video_url
+    finally:
+        if cookie_file and os.path.exists(cookie_file):
+            try:
+                os.remove(cookie_file)
+            except OSError:
+                pass
+
+
 def extract_text_from_docx(doc_bytes: bytes) -> str:
     doc = Document(io.BytesIO(doc_bytes))
     extracted_parts = []
@@ -1055,64 +758,6 @@ async def send_generated_files(message: Message, generated_files: list[tuple[str
         await message.answer_document(document=doc_file)
 
 
-async def process_yt_download_and_send(
-    message: Message, yt_target: str, audio_only: bool, link_only: bool = False
-) -> str:
-    """YouTube havolasi yoki qidiruv so'zini xavfsiz tekshirib, yuklab Telegramga yuboradi."""
-    status_msg = await message.answer(
-        f"Janob, '{yt_target}' bo‘yicha YouTube havolasi qidirilmoqda..."
-        if link_only
-        else (
-            f"Janob, '{yt_target}' bo‘yicha audio yuklanmoqda, biroz kuting..."
-            if audio_only
-            else f"Janob, '{yt_target}' bo‘yicha video yuklanmoqda, biroz kuting..."
-        )
-    )
-    await bot.send_chat_action(
-        chat_id=message.chat.id,
-        action="typing" if link_only else ("upload_voice" if audio_only else "upload_video"),
-    )
-
-    try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            file_path, title, video_url = await asyncio.to_thread(
-                download_youtube_media, yt_target, audio_only, tmp_dir, link_only
-            )
-
-            if link_only or not file_path:
-                await status_msg.edit_text(f"🎬 {title}\n🔗 Havola: {video_url}")
-                return f"YouTube’dan '{title}' havolasi topildi: {video_url}"
-
-            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            url_part = f"\n🔗 Havola: {video_url}" if video_url else ""
-
-            if file_size_mb > 49.5:
-                await status_msg.edit_text(
-                    f"Janob, '{title}' fayli hajmi ({file_size_mb:.1f} MB) Telegram botining 50 MB cheklovidan katta, "
-                    f"shuning uchun faylni jo‘nata olmadim. Quyidagi havola orqali ko‘rishingiz mumkin:{url_part}"
-                )
-                return f"YouTube’dan '{title}' havolasi berildi: {video_url}"
-
-            media_file = FSInputFile(file_path)
-            if audio_only:
-                await message.answer_audio(
-                    audio=media_file,
-                    title=title,
-                    caption=f"🎵 {title}{url_part}",
-                )
-            else:
-                await message.answer_video(
-                    video=media_file,
-                    caption=f"🎬 {title}{url_part}",
-                )
-
-            await status_msg.delete()
-            return f"YouTube’dan '{title}' ({'audio' if audio_only else 'video'}) va havolasi yuborildi: {video_url}"
-    except Exception as e:
-        await status_msg.edit_text(f"Uzr so‘rayman, Janob. {e}")
-        raise
-
-
 async def send_jarvis_reply(message: Message, reply_text: str, force_voice: bool = False):
     user_id = message.from_user.id
     use_voice = force_voice or is_voice_mode_enabled(user_id)
@@ -1131,7 +776,7 @@ async def send_jarvis_reply(message: Message, reply_text: str, force_voice: bool
         await send_long_message(message, reply_text)
 
 
-# --- 9. Telegram Handlerlar ---
+# --- 8. Telegram Handlerlar ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -1139,9 +784,7 @@ async def cmd_start(message: Message):
 
     welcome_text = (
         "Xush kelibsiz, Janob. J.A.R.V.I.S. tizimi to‘liq ishga tushirildi: "
-        "bugungi kun va soat holatidagi jonli ma’lumotlar, YouTube video va audio yuklash "
-        "(O‘zbekiston Respublikasi qonunchiligida taqiqlangan ma’ruza va kanallar filtrlangan holda), "
-        "ovozli aloqa, eslatmalar hamda Excel, Word, PDF va TXT hujjatlarni tahlil qilish va yaratish tayyor."
+        "ovozli aloqa, eslatmalar, YouTube video/qo‘shiq yuklash, rasm hamda Excel, Word, PDF va TXT hujjatlarni tahlil qilish va yaratish tayyor."
     )
     save_message_to_db(user_id, "model", welcome_text)
     await send_jarvis_reply(message, welcome_text, force_voice=True)
@@ -1215,16 +858,16 @@ async def handle_document(message: Message):
                 f"Foydalanuvchi buyrug'i: {prompt_text}\n\n"
                 f"--- HUJJAT MATNI ---\n{extracted_text}"
             )
-            response, generated_files, _ = await send_message_with_fallback(
-                user_id, full_prompt, use_custom_tools=True
+            response, generated_files = await send_message_with_fallback(
+                user_id, full_prompt, use_tools=True
             )
         else:
             doc_part = types.Part.from_bytes(
                 data=doc_bytes,
                 mime_type=gemini_mime,
             )
-            response, generated_files, _ = await send_message_with_fallback(
-                user_id, [doc_part, prompt_text], use_custom_tools=True
+            response, generated_files = await send_message_with_fallback(
+                user_id, [doc_part, prompt_text], use_tools=True
             )
 
         reply_text = (
@@ -1261,13 +904,13 @@ async def handle_voice(message: Message):
             mime_type="audio/ogg",
         )
 
-        response, generated_files, yt_requests = await send_message_with_fallback(
+        response, generated_files = await send_message_with_fallback(
             user_id,
             [
                 audio_part,
-                "Foydalanuvchining ovozli xabarini tingla va unga J.A.R.V.I.S. sifatida javob ber. Agar fayl yaratish yoki YouTube akkauntdan video olish/yuklash so'ralgan bo'lsa, tegishli funksiyadan foydalan.",
+                "Foydalanuvchining ovozli xabarini tingla va unga J.A.R.V.I.S. sifatida javob ber. Agar fayl yaratish so'ralgan bo'lsa, tegishli fayl yaratish funksiyasidan foydalan.",
             ],
-            use_custom_tools=True,
+            use_tools=True,
         )
 
         reply_text = (
@@ -1281,10 +924,6 @@ async def handle_voice(message: Message):
         await send_jarvis_reply(message, reply_text, force_voice=True)
         if generated_files:
             await send_generated_files(message, generated_files)
-        for req in yt_requests:
-            await process_yt_download_and_send(
-                message, req["url"], req["audio_only"], link_only=False
-            )
 
     except Exception as e:
         logging.exception("Ovozli xabarni qayta ishlashda xatolik:")
@@ -1315,8 +954,8 @@ async def handle_photo(message: Message):
             mime_type="image/jpeg",
         )
 
-        response, generated_files, _ = await send_message_with_fallback(
-            user_id, [image_part, prompt_text], use_custom_tools=True
+        response, generated_files = await send_message_with_fallback(
+            user_id, [image_part, prompt_text], use_tools=True
         )
 
         reply_text = (
@@ -1342,28 +981,31 @@ async def handle_photo(message: Message):
 async def handle_text(message: Message):
     user_id = message.from_user.id
     text_body = message.text or ""
-    lower_text = text_body.lower()
 
-    # 0. O'zbekiston Respublikasida taqiqlangan ma'ruzalar, ekstremistik oqimlar va kanallarni bloklash
-    if is_prohibited_uzb_content(text_body):
-        await message.answer(
-            "Uzr so‘rayman, Janob. O‘zbekiston Respublikasi qonunchiligida taqiqlangan "
-            "ma’ruzalar, ekstremistik oqimlar yoki bloklangan kanal va videolarni qidira olmayman hamda yuklab bera olmayman."
-        )
-        return
-
-    # 1. Shaxsiy YouTube akkaunt so'rovlarini aniqlash
-    is_my_yt_query = any(k in lower_text for k in MY_YT_KEYWORDS) and any(
-        w in lower_text
-        for w in ("youtube", "yutub", "yutube", "video", "ro'yxat", "royxat", "yukl", "tort")
-    )
-
-    # 2. Umumiy YouTube havolasi yoki nomi bo'yicha video/audio tortib/yuklab berish
+    # 1. YouTube havolasi yoki nomi bo'yicha video/qo'shiq qidirib yuklash
     yt_match = YOUTUBE_URL_PATTERN.search(text_body)
-    has_yt_keyword = (
-        not is_my_yt_query
-        and any(w in lower_text for w in ("youtube", "yutub", "yutube"))
-        and any(w in lower_text for w in YT_ACTION_KEYWORDS)
+    lower_text = text_body.lower()
+    has_yt_keyword = any(
+        w in lower_text for w in ("youtube", "yutub", "yutube")
+    ) and any(
+        w in lower_text
+        for w in (
+            "top",
+            "yukl",
+            "tashla",
+            "ber",
+            "qo'y",
+            "qoy",
+            "mp3",
+            "audio",
+            "video",
+            "qo'shiq",
+            "qoshiq",
+            "musiqa",
+            "silka",
+            "havola",
+            "link",
+        )
     )
 
     if yt_match or has_yt_keyword:
@@ -1371,7 +1013,7 @@ async def handle_text(message: Message):
             yt_target = yt_match.group(1)
         else:
             clean_query = re.sub(
-                r"\b(jarvis|youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|videoni|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|qoʻshigʻini|musiqa|audio|mp3|mp4|topib|top|yuklab|yuklaver|yukla|tortib|tort|skachat|tashlab|tashla|ber|bersang|bersinda|qilib|shuni|silkasini|silka|havolasini|havola|linkini|link|ha|ham|menga|desam|kerak)\b",
+                r"\b(youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|qoʻshigʻini|musiqa|audio|mp3|topib|top|yuklab|yuklaver|yukla|tashlab|tashla|ber|bersang|bersinda|qilib|shuni|silkasini|silka|havolasini|havola|linkini|link|ha|ham)\b",
                 " ",
                 lower_text,
             )
@@ -1380,26 +1022,85 @@ async def handle_text(message: Message):
 
         audio_only = any(k in lower_text for k in AUDIO_INTENT_KEYWORDS)
         link_only = any(k in lower_text for k in LINK_ONLY_KEYWORDS) and not any(
-            k in lower_text for k in ("yukl", "tort", "skachat", "mp3", "mp4", "audio", "video", "fayl")
+            k in lower_text for k in ("yukl", "mp3", "audio", "video", "fayl")
+        )
+
+        status_msg = await message.answer(
+            f"Janob, '{yt_target}' bo‘yicha YouTube havolasi qidirilmoqda..."
+            if link_only
+            else (
+                f"Janob, '{yt_target}' bo‘yicha audio va havola qidirilmoqda, biroz kuting..."
+                if audio_only
+                else f"Janob, '{yt_target}' bo‘yicha video va havola qidirilmoqda, biroz kuting..."
+            )
+        )
+        await bot.send_chat_action(
+            chat_id=message.chat.id,
+            action="typing" if link_only else ("upload_voice" if audio_only else "upload_video"),
         )
 
         try:
-            log_summary = await process_yt_download_and_send(
-                message, yt_target, audio_only, link_only
-            )
-            save_message_to_db(user_id, "user", text_body)
-            save_message_to_db(user_id, "model", log_summary)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                file_path, title, video_url = await asyncio.to_thread(
+                    download_youtube_media, yt_target, audio_only, tmp_dir, link_only
+                )
+
+                if link_only or not file_path:
+                    await status_msg.edit_text(
+                        f"🎬 {title}\n🔗 Havola: {video_url}"
+                    )
+                    save_message_to_db(user_id, "user", text_body)
+                    save_message_to_db(
+                        user_id,
+                        "model",
+                        f"YouTube’dan '{title}' havolasi topildi: {video_url}",
+                    )
+                    return
+
+                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                url_part = f"\n🔗 Havola: {video_url}" if video_url else ""
+
+                if file_size_mb > 49.5:
+                    await status_msg.edit_text(
+                        f"Janob, '{title}' fayli hajmi ({file_size_mb:.1f} MB) Telegram botining 50 MB cheklovidan katta, "
+                        f"shuning uchun faylni jo‘nata olmadim. Quyidagi havola orqali ko‘rishingiz mumkin:{url_part}"
+                    )
+                    return
+
+                media_file = FSInputFile(file_path)
+                if audio_only:
+                    await message.answer_audio(
+                        audio=media_file,
+                        title=title,
+                        caption=f"🎵 {title}{url_part}",
+                    )
+                else:
+                    await message.answer_video(
+                        video=media_file,
+                        caption=f"🎬 {title}{url_part}",
+                    )
+
+                await status_msg.delete()
+                save_message_to_db(user_id, "user", text_body)
+                save_message_to_db(
+                    user_id,
+                    "model",
+                    f"YouTube’dan '{title}' ({'audio' if audio_only else 'video'}) va havolasi yuborildi: {video_url}",
+                )
         except Exception as e:
             logging.exception("YouTube yuklashda xatolik:")
+            await status_msg.edit_text(
+                f"Uzr so‘rayman, Janob. {e}"
+            )
         return
 
-    # 3. Bugungi kun va soat holatidagi jonli ma'lumotlar (Google Search), eslatmalar, hujjatlar
+    # 2. Oddiy matnli suhbat, eslatmalar va hujjat yaratish
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     try:
-        needs_custom_tools = should_enable_custom_tools(text_body)
-        response, generated_files, yt_requests = await send_message_with_fallback(
-            user_id, text_body, use_custom_tools=needs_custom_tools
+        needs_tools = should_enable_tools(text_body)
+        response, generated_files = await send_message_with_fallback(
+            user_id, text_body, use_tools=needs_tools
         )
         reply_text = (
             format_response_with_sources(response)
@@ -1412,10 +1113,6 @@ async def handle_text(message: Message):
         await send_jarvis_reply(message, reply_text)
         if generated_files:
             await send_generated_files(message, generated_files)
-        for req in yt_requests:
-            await process_yt_download_and_send(
-                message, req["url"], req["audio_only"], link_only=False
-            )
 
     except Exception as e:
         logging.exception("Matn so'rovida xatolik:")
