@@ -31,10 +31,19 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEYS_RAW = os.getenv("GEMINI_API_KEYS", "")
 ALLOWED_USER_ID_RAW = os.getenv("ALLOWED_USER_ID")
 TIMEZONE_STR = os.getenv("TIMEZONE", "Asia/Tashkent")
 
-if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not ALLOWED_USER_ID_RAW:
+API_KEYS_POOL: list[str] = []
+for k in (GEMINI_API_KEYS_RAW or "").split(","):
+    clean_k = k.strip()
+    if clean_k and clean_k not in API_KEYS_POOL:
+        API_KEYS_POOL.append(clean_k)
+if GEMINI_API_KEY and GEMINI_API_KEY.strip() not in API_KEYS_POOL:
+    API_KEYS_POOL.insert(0, GEMINI_API_KEY.strip())
+
+if not TELEGRAM_BOT_TOKEN or not API_KEYS_POOL or not ALLOWED_USER_ID_RAW:
     raise ValueError(
         "Xatolik: .env faylida TELEGRAM_BOT_TOKEN, GEMINI_API_KEY yoki ALLOWED_USER_ID topilmadi!"
     )
@@ -63,9 +72,9 @@ Qoidalar:
 """
 
 FALLBACK_MODELS = [
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
 ]
 TTS_VOICE = "uz-UZ-SardorNeural"
 DB_PATH = "jarvis_memory.db"
@@ -311,7 +320,6 @@ SUPPORTED_EXTENSIONS = {
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-client = genai.Client(api_key=GEMINI_API_KEY)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
@@ -1077,39 +1085,48 @@ def build_chat_config(user_id: int, custom_tools: list | None = None):
 async def send_message_with_fallback(
     user_id: int, message_content: Any, use_custom_tools: bool = False
 ):
-    """Zaxira modellar ro'yxati bo'yicha jonli qidiruv yoki maxsus funksiyalar bilan javob oladi."""
+    """Bir nechta API kalit va zaxira modellar bo'yicha javob oladi."""
     history = load_history_from_db(user_id)
     last_error = None
     quota_hit = False
 
-    for model_id in FALLBACK_MODELS:
-        generated_files: list[tuple[str, bytes]] = []
-        yt_download_requests: list[dict] = []
-        custom_tools = (
-            create_tools_for_user(user_id, generated_files, yt_download_requests)
-            if use_custom_tools
-            else None
-        )
-        config = build_chat_config(user_id, custom_tools=custom_tools)
+    for api_key in API_KEYS_POOL:
+        key_client = genai.Client(api_key=api_key)
+        all_keys_exhausted_for_current = True
 
-        try:
-            chat = client.chats.create(
-                model=model_id,
-                history=history,
-                config=config,
+        for model_id in FALLBACK_MODELS:
+            generated_files: list[tuple[str, bytes]] = []
+            yt_download_requests: list[dict] = []
+            custom_tools = (
+                create_tools_for_user(user_id, generated_files, yt_download_requests)
+                if use_custom_tools
+                else None
             )
-            response = await asyncio.to_thread(chat.send_message, message_content)
-            return response, generated_files, yt_download_requests
-        except Exception as e:
-            last_error = e
-            err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                quota_hit = True
-            logging.warning(
-                f"{model_id} vaqtincha javob bermadi ({e}), keyingi zaxira modelga o'tilmoqda..."
-            )
-            await asyncio.sleep(1.2)
-            continue
+            config = build_chat_config(user_id, custom_tools=custom_tools)
+
+            try:
+                chat = key_client.chats.create(
+                    model=model_id,
+                    history=history,
+                    config=config,
+                )
+                response = await asyncio.to_thread(chat.send_message, message_content)
+                return response, generated_files, yt_download_requests
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    quota_hit = True
+                else:
+                    all_keys_exhausted_for_current = False
+                logging.warning(
+                    f"{model_id} vaqtincha javob bermadi ({e}), keyingi zaxira modelga o'tilmoqda..."
+                )
+                await asyncio.sleep(1.0)
+                continue
+
+        if not all_keys_exhausted_for_current:
+            break
 
     if quota_hit:
         raise RuntimeError(
