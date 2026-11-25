@@ -1,5 +1,6 @@
 import asyncio
 import glob
+import html
 import io
 import json
 import logging
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict
 from zoneinfo import ZoneInfo
 
+import aiohttp
 import edge_tts
 import yt_dlp
 from aiohttp import web
@@ -49,6 +51,7 @@ Qoidalar:
 - Javoblarni qisqa, lo'nda va texnik jihatdan aniq ber.
 - Ovozli javoblar uchun ortiqcha belgilar (*, #, _) ishlatma, chunki matn ovozga o'giriladi.
 - Jonli ma'lumotlar (bugungi ob-havo, yangiliklar, valyuta kurslari, sport natijalari, hozirgi soat/sana holatidagi voqealar) so'ralganda Google Search natijalariga tayanib eng so'nggi faktlarni keltir.
+- Agar foydalanuvchi ochiq Telegram kanallari (t.me/... yoki @username) yoki Telegram'dagi ma'lumotlarni topishni so'rasa, Google Search (site:t.me) natijalaridan foydalanib haqiqiy ochiq Telegram kanallari va postlarining t.me havolalarini ro'yxat qilib ber.
 - QAT'IY XAVFSIZLIK QOIDASI: O'zbekiston Respublikasi qonunchiligida taqiqlangan ekstremistik, terroristik, radikal va aqidaparastlik g'oyalarini targ'ib qiluvchi ma'ruzalar, tashkilotlar, kanallar va videolarni HECH QACHON qidirmagin, topmagin, tavsiya qilmagin va yuklab bermagin.
 - Hujjatlar (PDF, Word yoki matnli fayllar) yuborilganda ularning asosiy mazmuni, raqamlar va muhim xulosalarini tizimli ravishda chiqar.
 - Agar foydalanuvchi Excel (.xlsx), Word (.docx), PDF (.pdf) yoki TXT (.txt) fayl tayyorlab berishni so'rasa, HECH QACHON soxta havola yoki '[Yuklab olish: ...]' deb yozma! Buning o'rniga tegishli fayl yaratish funksiyasini (create_excel_file, create_word_file, create_pdf_file yoki create_text_file) chaqir.
@@ -116,6 +119,16 @@ MY_YT_KEYWORDS = (
     "saqlangan",
 )
 
+# Ochiq Telegram qidiruv kalit so'zlari
+TELEGRAM_SEARCH_KEYWORDS = (
+    "telegram",
+    "t.me/",
+    "telegramdan",
+    "telegramdagi",
+    "kanaldan",
+    "kanallardan",
+)
+
 # O'zbekiston Respublikasida taqiqlangan ekstremistik/terroristik tashkilotlar, oqimlar va ma'ruzalar filtri
 UZB_PROHIBITED_KEYWORDS = (
     "hizb ut-tahrir",
@@ -170,6 +183,9 @@ UZB_PROHIBITED_KEYWORDS = (
 
 YOUTUBE_URL_PATTERN = re.compile(
     r"(https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/|live/|playlist\?list=|@)|youtu\.be/)[^\s]+)"
+)
+TELEGRAM_URL_PATTERN = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me)/(?:s/)?([a-zA-Z0-9_]{4,})(?:/(\d+))?"
 )
 YT_ACTION_KEYWORDS = (
     "top",
@@ -370,7 +386,7 @@ def clear_history_in_db(user_id: int):
         conn.commit()
 
 
-# --- 5. Taqiqlangan Ma'ruzalar / Kanallar Filtri va YouTube Funksiyalari ---
+# --- 5. Taqiqlangan Ma'ruzalar / Kanallar Filtri, Ochiq Telegram va YouTube Funksiyalari ---
 def _get_custom_blocked_channels() -> tuple[str, ...]:
     raw = os.getenv("BLOCKED_YT_CHANNELS", "")
     return tuple(c.strip().lower() for c in raw.split(",") if c.strip())
@@ -391,6 +407,94 @@ def is_prohibited_uzb_content(
         return True
 
     return False
+
+
+async def fetch_public_telegram_channel_posts(
+    channel_or_url: str, keyword: str = "", limit: int = 6
+) -> list[dict]:
+    """Ochiq Telegram kanalining (t.me/s/<username>) oxirgi postlarini o'qiydi."""
+    if is_prohibited_uzb_content(f"{channel_or_url} {keyword}"):
+        raise PermissionError(
+            "O‘zbekiston Respublikasi qonunchiligida taqiqlangan manbalar tekshirilmaydi."
+        )
+
+    m = TELEGRAM_URL_PATTERN.search(channel_or_url)
+    if m:
+        username = m.group(1)
+    else:
+        username = re.sub(r"[^a-zA-Z0-9_]", "", channel_or_url.lstrip("@").strip())
+
+    if not username or len(username) < 4:
+        return []
+
+    web_url = f"https://t.me/s/{username}"
+    if keyword:
+        web_url += f"?q={keyword}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.get(web_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status != 200:
+                return []
+            page_html = await resp.text()
+
+    blocks = re.findall(
+        r'<div class="tgme_widget_message_wrap[\s\S]*?(?=<div class="tgme_widget_message_wrap|</section>)',
+        page_html,
+    )
+    posts = []
+    kw_lower = keyword.lower().strip()
+
+    for block in reversed(blocks):
+        post_link_m = re.search(
+            rf'href="(https://t\.me/{re.escape(username)}/\d+)"', block
+        )
+        post_url = post_link_m.group(1) if post_link_m else f"https://t.me/{username}"
+
+        text_m = re.search(
+            r'<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)</div>', block
+        )
+        raw_text = text_m.group(1) if text_m else ""
+        clean_text = re.sub(r"<br\s*/?>", "\n", raw_text)
+        clean_text = re.sub(r"<[^>]+>", "", clean_text)
+        clean_text = html.unescape(clean_text).strip()
+
+        media_tag = ""
+        if "tgme_widget_message_audio" in block or "tgme_widget_message_document" in block:
+            doc_m = re.search(
+                r'<div class="tgme_widget_message_document_title"[^>]*>([\s\S]*?)</div>',
+                block,
+            )
+            doc_name = (
+                html.unescape(re.sub(r"<[^>]+>", "", doc_m.group(1))).strip()
+                if doc_m
+                else "Audio/Fayl"
+            )
+            media_tag = f"[Fayl: {doc_name}] "
+        elif "tgme_widget_message_video" in block:
+            media_tag = "[Video] "
+
+        combined = f"{media_tag}{clean_text}".strip()
+        if not combined:
+            continue
+        if is_prohibited_uzb_content(combined, username):
+            continue
+        if kw_lower and kw_lower not in combined.lower():
+            continue
+
+        posts.append(
+            {
+                "channel": f"@{username}",
+                "text": combined[:350],
+                "url": post_url,
+            }
+        )
+        if len(posts) >= limit:
+            break
+
+    return posts
 
 
 def _prepare_youtube_cookie_file(out_dir: str) -> str | None:
@@ -1123,9 +1227,7 @@ async def process_yt_download_and_send(
 
             if link_only or not file_path:
                 main_link = f"\n🔗 Havola: {video_url}" if video_url else ""
-                await status_msg.edit_text(
-                    f"🎬 {title}{main_link}{variants_text}"
-                )
+                await status_msg.edit_text(f"🎬 {title}{main_link}{variants_text}")
                 return f"YouTube’dan '{title}' bo‘yicha variantlar yuborildi: {video_url}"
 
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
@@ -1188,8 +1290,8 @@ async def cmd_start(message: Message):
 
     welcome_text = (
         "Xush kelibsiz, Janob. J.A.R.V.I.S. tizimi to‘liq ishga tushirildi: "
-        "bugungi kun va soat holatidagi jonli ma’lumotlar, YouTube video/audio yuklash va varyantlar ro‘yxati "
-        "(O‘zbekiston Respublikasi qonunchiligida taqiqlangan ma’ruza va kanallar filtrlangan holda), "
+        "bugungi kun va soat holatidagi jonli ma’lumotlar, YouTube hamda ochiq Telegram kanallaridan "
+        "qidirish va yuklash (O‘zbekiston Respublikasi qonunchiligida taqiqlangan ma’ruza va kanallar filtrlangan holda), "
         "ovozli aloqa, eslatmalar hamda Excel, Word, PDF va TXT hujjatlarni tahlil qilish va yaratish tayyor."
     )
     save_message_to_db(user_id, "model", welcome_text)
@@ -1401,13 +1503,73 @@ async def handle_text(message: Message):
         )
         return
 
-    # 1. Shaxsiy YouTube akkaunt so'rovlarini aniqlash
+    # 1. Ochiq Telegram kanali (t.me/... yoki @username) yoki Telegram qidiruv so'rovini tekshirish
+    tg_url_match = TELEGRAM_URL_PATTERN.search(text_body)
+    at_channel_match = re.search(r"@([a-zA-Z0-9_]{4,})", text_body)
+    is_telegram_query = bool(tg_url_match) or (
+        any(k in lower_text for k in TELEGRAM_SEARCH_KEYWORDS)
+    )
+
+    if is_telegram_query:
+        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        target_channel = (
+            tg_url_match.group(1)
+            if tg_url_match
+            else (at_channel_match.group(1) if at_channel_match else "")
+        )
+        clean_tg_kw = re.sub(
+            r"(https?://\S+|@[a-zA-Z0-9_]+|\b(jarvis|telegram|telegramdan|telegramdagi|kanaldan|kanallardan|dan|dagi|oxirgi|yangi|postlarni|xabarlarni|qo'shiq|qoshiq|qo'shiqlarini|qoshiqlarini|video|videolarini|topib|top|ber|o'qib|oqib|chiqar|menga)\b)",
+            " ",
+            lower_text,
+        )
+        clean_tg_kw = re.sub(r"\s+", " ", clean_tg_kw).strip()
+
+        if target_channel:
+            try:
+                posts = await fetch_public_telegram_channel_posts(
+                    target_channel, keyword=clean_tg_kw, limit=6
+                )
+                if posts:
+                    lines = [f"📢 Ochiq Telegram kanali ({posts[0]['channel']}) natijalari:"]
+                    for idx, p in enumerate(posts, start=1):
+                        lines.append(f"\n{idx}. {p['text']}\n   🔗 {p['url']}")
+                    reply_text = "\n".join(lines)
+                    save_message_to_db(user_id, "user", text_body)
+                    save_message_to_db(user_id, "model", reply_text)
+                    await send_jarvis_reply(message, reply_text)
+                    return
+            except PermissionError as pe:
+                await message.answer(f"Uzr so‘rayman, Janob. {pe}")
+                return
+            except Exception as tg_err:
+                logging.warning(f"Ochiq Telegram kanalini o'qishda xatolik: {tg_err}")
+
+        tg_search_prompt = (
+            f"Ochiq Telegram kanallari va postlari (site:t.me) ichidan quyidagi so'rov bo'yicha "
+            f"eng mos kanallar/postlar va ularning haqiqiy t.me havolalarini ro'yxat qilib ber: {clean_tg_kw or text_body}"
+        )
+        try:
+            response, _, _ = await send_message_with_fallback(
+                user_id, tg_search_prompt, use_custom_tools=False
+            )
+            reply_text = (
+                format_response_with_sources(response)
+                or "Janob, ochiq Telegram kanallaridan mos natija topilmadi."
+            )
+            save_message_to_db(user_id, "user", text_body)
+            save_message_to_db(user_id, "model", reply_text)
+            await send_jarvis_reply(message, reply_text)
+        except Exception as e:
+            await message.answer(f"Uzr so‘rayman, Janob. {e}")
+        return
+
+    # 2. Shaxsiy YouTube akkaunt so'rovlarini aniqlash
     is_my_yt_query = any(k in lower_text for k in MY_YT_KEYWORDS) and any(
         w in lower_text
         for w in ("youtube", "yutub", "yutube", "video", "ro'yxat", "royxat", "yukl", "tort")
     )
 
-    # 2. Har qanday media (qo'shiq, video, mp3, mp4, audio, silka, varyantlar, yuklab/tortib ber) so'rovini yt-dlp ga yuborish
+    # 3. Har qanday YouTube media (qo'shiq, video, mp3, mp4, audio, silka, varyantlar, yuklab/tortib ber) so'rovi
     yt_match = YOUTUBE_URL_PATTERN.search(text_body)
     has_media_download_intent = (
         not is_my_yt_query
@@ -1442,7 +1604,7 @@ async def handle_text(message: Message):
             logging.exception("YouTube yuklashda xatolik:")
         return
 
-    # 3. Bugungi kun va soat holatidagi jonli ma'lumotlar (Google Search), eslatmalar, hujjatlar
+    # 4. Bugungi kun va soat holatidagi jonli ma'lumotlar (Google Search), eslatmalar, hujjatlar
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     try:
