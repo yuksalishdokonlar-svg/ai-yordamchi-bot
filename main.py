@@ -51,10 +51,13 @@ Qoidalar:
 - Javoblarni qisqa, lo'nda va texnik jihatdan aniq ber.
 - Ovozli javoblar uchun ortiqcha belgilar (*, #, _) ishlatma, chunki matn ovozga o'giriladi.
 - Jonli ma'lumotlar (bugungi ob-havo, yangiliklar, valyuta kurslari, sport natijalari, hozirgi soat/sana holatidagi voqealar) so'ralganda Google Search natijalariga tayanib eng so'nggi faktlarni keltir.
+- Agar foydalanuvchi biror kitobning PDF, elektron yoki audio (audiokitob) shaklini topib berishni so'rasa, FAQAT ishonchli va taqiqlanmagan kutubxona/manbalardan (ziyouz.com, kitobxon.com, mutolaa.com, library.ziyonet.uz, archive.org, gutenberg.org) olingan haqiqiy havolalar va ma'lumotlarni keltir. Shubhali yoki taqiqlangan saytlardan foydalanma.
+- Agar foydalanuvchi O'zbekiston Respublikasi Konstitutsiyasi, qonunlar, kodekslar, farmon yoki qarorlar haqida so'rasa, birinchi navbatda rasmiy huquqiy manbalardan (lex.uz, parliament.gov.uz) aniq modda raqamlari, qabul qilingan sanalar va havolalar bilan keltir.
+- Agar foydalanuvchi soliq, QQS, foyda solig'i, hisobotlar yoki soliq qonunchiligi bo'yicha yangilik/ma'lumot so'rasa, birinchi navbatda O'zbekistonning rasmiy soliq saytlaridan (soliq.uz, my.soliq.uz, new.soliqservis.uz, lex.uz) eng so'nggi ma'lumotlarni olib, aniq sanalar va havolalar bilan keltir.
 - Agar foydalanuvchi ochiq Telegram kanallari (t.me/... yoki @username) yoki Telegram'dagi ma'lumotlarni topishni so'rasa, Google Search (site:t.me) natijalaridan foydalanib haqiqiy ochiq Telegram kanallari va postlarining t.me havolalarini ro'yxat qilib ber.
-- QAT'IY XAVFSIZLIK QOIDASI: O'zbekiston Respublikasi qonunchiligida taqiqlangan ekstremistik, terroristik, radikal va aqidaparastlik g'oyalarini targ'ib qiluvchi ma'ruzalar, tashkilotlar, kanallar va videolarni HECH QACHON qidirmagin, topmagin, tavsiya qilmagin va yuklab bermagin.
+- QAT'IY XAVFSIZLIK QOIDASI: O'zbekiston Respublikasi qonunchiligida taqiqlangan ekstremistik, terroristik, radikal va aqidaparastlik g'oyalarini targ'ib qiluvchi ma'ruzalar, kitoblar, adabiyotlar, tashkilotlar, kanallar va videolarni HECH QACHON qidirmagin, topmagin, tavsiya qilmagin va yuklab bermagin.
 - Hujjatlar (PDF, Word yoki matnli fayllar) yuborilganda ularning asosiy mazmuni, raqamlar va muhim xulosalarini tizimli ravishda chiqar.
-- Agar foydalanuvchi Excel (.xlsx), Word (.docx), PDF (.pdf) yoki TXT (.txt) fayl tayyorlab berishni so'rasa, HECH QACHON soxta havola yoki '[Yuklab olish: ...]' deb yozma! Buning o'rniga tegishli fayl yaratish funksiyasini (create_excel_file, create_word_file, create_pdf_file yoki create_text_file) chaqir.
+- Agar foydalanuvchi Excel (.xlsx), Word (.docx), PDF (.pdf) yoki TXT (.txt) fayl tayyorlab berishni so'rasa (qidirish emas, balki yangi hujjat yaratish), HECH QACHON soxta havola yozma! Tegishli fayl yaratish funksiyasini (create_excel_file, create_word_file, create_pdf_file yoki create_text_file) chaqir.
 - Agar foydalanuvchi o'zining YouTube akkauntidagi videolarni (keyinroq ko'rish, yoqtirilganlar, obunalar, tarix) ko'rishni yoki yuklab olishni so'rasa, tegishli YouTube akkaunt funksiyalaridan (get_my_youtube_videos yoki download_from_my_youtube) foydalan.
 - O'zbek tilida ravon javob ber.
 """
@@ -67,6 +70,16 @@ FALLBACK_MODELS = [
 TTS_VOICE = "uz-UZ-SardorNeural"
 DB_PATH = "jarvis_memory.db"
 MAX_HISTORY_MESSAGES = 20
+
+# Ishonchli kitob manbalari
+TRUSTED_BOOK_SITES = (
+    "ziyouz.com",
+    "kitobxon.com",
+    "mutolaa.com",
+    "library.ziyonet.uz",
+    "archive.org",
+    "gutenberg.org",
+)
 
 # Eslatma rejimini aniqlash uchun kalit so'zlar
 REMINDER_KEYWORDS = (
@@ -81,7 +94,7 @@ REMINDER_KEYWORDS = (
     "jadval",
 )
 
-# Fayl yaratish rejimini aniqlash uchun kalit so'zlar
+# Fayl yaratish rejimini aniqlash uchun kalit so'zlar (faqat yaratish/tayyorlash buyruqlari)
 FILE_GEN_KEYWORDS = (
     "excel",
     "exzel",
@@ -91,12 +104,32 @@ FILE_GEN_KEYWORDS = (
     "word",
     "wort",
     "docx",
-    "pdf",
-    "txt",
     "fayl qil",
     "fayl yarat",
     "fayl tayyorla",
     "hujjat tayyorla",
+    "pdf yarat",
+    "pdf tayyorla",
+    "pdf qil",
+    "txt yarat",
+    "txt tayyorla",
+)
+
+# Kitob qidiruviga oid kalit so'zlar
+BOOK_SEARCH_KEYWORDS = (
+    "kitob",
+    "kitobni",
+    "kitobini",
+    "audiokitob",
+    "audio kitob",
+    "roman",
+    "qissa",
+    "asar",
+    "darslik",
+    "qo'llanma",
+    "qollanma",
+    "farmat",
+    "format",
 )
 
 # Shaxsiy YouTube akkaunt ma'lumotlari kalit so'zlari
@@ -127,6 +160,33 @@ TELEGRAM_SEARCH_KEYWORDS = (
     "telegramdagi",
     "kanaldan",
     "kanallardan",
+)
+
+# Soliq sohasiga oid kalit so'zlar
+TAX_DOMAIN_KEYWORDS = (
+    "soliq",
+    "qqs",
+    "foyda solig",
+    "daromad solig",
+    "my.soliq",
+    "soliqservis",
+    "didox",
+    "hisobot",
+    "stavka",
+)
+
+# Konstitutsiya va huquqiy-me'yoriy manbalarga oid kalit so'zlar
+LEGAL_DOMAIN_KEYWORDS = (
+    "konstitutsiya",
+    "konistutsiya",
+    "kodeks",
+    "qonun",
+    "farmon",
+    "qaror",
+    "modda",
+    "huquq",
+    "majburiyat",
+    "lex.uz",
 )
 
 # O'zbekiston Respublikasida taqiqlangan ekstremistik/terroristik tashkilotlar, oqimlar va ma'ruzalar filtri
@@ -187,15 +247,13 @@ YOUTUBE_URL_PATTERN = re.compile(
 TELEGRAM_URL_PATTERN = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me)/(?:s/)?([a-zA-Z0-9_]{4,})(?:/(\d+))?"
 )
-YT_ACTION_KEYWORDS = (
-    "top",
+YT_MEDIA_KEYWORDS = (
+    "youtube",
+    "yutub",
+    "yutube",
     "yukl",
     "tort",
     "skachat",
-    "tashla",
-    "ber",
-    "qo'y",
-    "qoy",
     "mp3",
     "mp4",
     "audio",
@@ -224,6 +282,7 @@ AUDIO_INTENT_KEYWORDS = (
     "toplam",
     "musiqa",
     "ovoz",
+    "audiokitob",
 )
 LINK_ONLY_KEYWORDS = ("silka", "havola", "link", "url")
 
@@ -395,7 +454,7 @@ def _get_custom_blocked_channels() -> tuple[str, ...]:
 def is_prohibited_uzb_content(
     text: str, channel: str = "", description: str = ""
 ) -> bool:
-    """O'zbekiston Respublikasida taqiqlangan ma'ruzalar, oqimlar va bloklangan kanallarni aniqlaydi."""
+    """O'zbekiston Respublikasida taqiqlangan ma'ruzalar, kitoblar, oqimlar va bloklangan manbalarni aniqlaydi."""
     normalized = f"{text} {channel} {description}".lower()
     normalized = normalized.replace("ʻ", "'").replace("’", "'").replace("‘", "'")
 
@@ -982,6 +1041,11 @@ def create_tools_for_user(
 def should_enable_custom_tools(text: str) -> bool:
     """So'rov eslatma, fayl yaratish yoki shaxsiy YouTube akkauntga oid ekanligini tekshiradi."""
     lower_text = text.lower()
+    if any(b in lower_text for b in BOOK_SEARCH_KEYWORDS) and not any(
+        w in lower_text for w in ("yarat", "tayyorla", "eslat")
+    ):
+        return False
+
     return (
         any(k in lower_text for k in REMINDER_KEYWORDS)
         or any(k in lower_text for k in FILE_GEN_KEYWORDS)
@@ -1055,9 +1119,15 @@ async def send_message_with_fallback(
     raise last_error
 
 
-def format_response_with_sources(response) -> str:
-    """Gemini javobiga Google Search manbalari (havolalar) mavjud bo'lsa, oxiriga qo'shadi."""
+def format_response_with_sources(response, strict_book_sources: bool = False) -> str:
+    """Gemini javobiga ishonchli va taqiqlanmagan Google Search manbalari (havolalar) ni qo'shadi."""
     text = response.text or ""
+    if is_prohibited_uzb_content(text):
+        return (
+            "Uzr so‘rayman, Janob. O‘zbekiston Respublikasi qonunchiligida taqiqlangan "
+            "manbalar yoki ma’lumotlar javobdan olib tashlandi."
+        )
+
     try:
         candidate = response.candidates[0]
         metadata = getattr(candidate, "grounding_metadata", None)
@@ -1068,15 +1138,29 @@ def format_response_with_sources(response) -> str:
             seen_urls = set()
             for chunk in chunks:
                 web = getattr(chunk, "web", None)
-                if web and getattr(web, "uri", None) and web.uri not in seen_urls:
-                    seen_urls.add(web.uri)
-                    title = getattr(web, "title", None) or "Manba"
-                    sources.append(f"• {title}: {web.uri}")
-                    if len(sources) >= 3:
-                        break
+                uri = getattr(web, "uri", None) if web else None
+                title = (getattr(web, "title", None) if web else None) or "Manba"
+                if not uri or uri in seen_urls:
+                    continue
+                if is_prohibited_uzb_content(title, uri):
+                    continue
+                if strict_book_sources and not any(
+                    dom in uri.lower() for dom in TRUSTED_BOOK_SITES
+                ):
+                    continue
+
+                seen_urls.add(uri)
+                sources.append(f"• {title}: {uri}")
+                if len(sources) >= 3:
+                    break
 
             if sources:
-                text += "\n\nManbalar:\n" + "\n".join(sources)
+                text += "\n\nIshonchli manbalar:\n" + "\n".join(sources)
+            elif strict_book_sources:
+                text += (
+                    "\n\nEslatma: Faqat tasdiqlangan kutubxona manbalari "
+                    "(ziyouz.com, kitobxon.com, mutolaa.com, library.ziyonet.uz, archive.org, gutenberg.org) tekshirildi."
+                )
     except Exception:
         pass
 
@@ -1160,7 +1244,7 @@ def extract_text_from_docx(doc_bytes: bytes) -> str:
 
 
 def clean_text_for_tts(text: str) -> str:
-    text = text.split("\n\nManbalar:\n")[0]
+    text = text.split("\n\nIshonchli manbalar:\n")[0].split("\n\nManbalar:\n")[0]
     text = re.sub(r"[*_`#>-]", "", text)
     return text.strip()
 
@@ -1290,8 +1374,10 @@ async def cmd_start(message: Message):
 
     welcome_text = (
         "Xush kelibsiz, Janob. J.A.R.V.I.S. tizimi to‘liq ishga tushirildi: "
-        "bugungi kun va soat holatidagi jonli ma’lumotlar, YouTube hamda ochiq Telegram kanallaridan "
-        "qidirish va yuklash (O‘zbekiston Respublikasi qonunchiligida taqiqlangan ma’ruza va kanallar filtrlangan holda), "
+        "bugungi kun va soat holatidagi jonli ma’lumotlar, Konstitutsiya va qonunchilik (lex.uz), "
+        "rasmiy soliq manbalari (soliq.uz, my.soliq.uz), ishonchli kutubxonalardan kitoblarning audio va PDF shakllarini qidirish, "
+        "YouTube hamda ochiq Telegram kanallaridan qidirish va yuklash "
+        "(O‘zbekiston Respublikasi qonunchiligida taqiqlangan ma’ruza, kitob va kanallar qat’iy filtrlangan holda), "
         "ovozli aloqa, eslatmalar hamda Excel, Word, PDF va TXT hujjatlarni tahlil qilish va yaratish tayyor."
     )
     save_message_to_db(user_id, "model", welcome_text)
@@ -1495,11 +1581,11 @@ async def handle_text(message: Message):
     text_body = message.text or ""
     lower_text = text_body.lower()
 
-    # 0. O'zbekiston Respublikasida taqiqlangan ma'ruzalar, ekstremistik oqimlar va kanallarni bloklash
+    # 0. O'zbekiston Respublikasida taqiqlangan ma'ruzalar, kitoblar, ekstremistik oqimlar va manbalarni bloklash
     if is_prohibited_uzb_content(text_body):
         await message.answer(
             "Uzr so‘rayman, Janob. O‘zbekiston Respublikasi qonunchiligida taqiqlangan "
-            "ma’ruzalar, ekstremistik oqimlar yoki bloklangan kanal va videolarni qidira olmayman hamda yuklab bera olmayman."
+            "ma’ruzalar, kitoblar, ekstremistik oqimlar yoki bloklangan manbalarni qidira olmayman hamda yuklab bera olmayman."
         )
         return
 
@@ -1563,18 +1649,25 @@ async def handle_text(message: Message):
             await message.answer(f"Uzr so‘rayman, Janob. {e}")
         return
 
-    # 2. Shaxsiy YouTube akkaunt so'rovlarini aniqlash
+    # 2. Kitob qidiruvini aniqlash (ishonchli manbalardan PDF/elektron yoki audiokitob)
+    is_book_query = any(b in lower_text for b in BOOK_SEARCH_KEYWORDS)
+    is_book_pdf_only = is_book_query and not any(
+        a in lower_text for a in ("audio", "mp3", "ovoz", "audiokitob", "eshit")
+    )
+
+    # 3. Shaxsiy YouTube akkaunt so'rovlarini aniqlash
     is_my_yt_query = any(k in lower_text for k in MY_YT_KEYWORDS) and any(
         w in lower_text
         for w in ("youtube", "yutub", "yutube", "video", "ro'yxat", "royxat", "yukl", "tort")
     )
 
-    # 3. Har qanday YouTube media (qo'shiq, video, mp3, mp4, audio, silka, varyantlar, yuklab/tortib ber) so'rovi
+    # 4. Faqat aniq YouTube havolasi yoki media/audiokitob yuklash so'rovi bo'lsa yt-dlp ga yuborish
     yt_match = YOUTUBE_URL_PATTERN.search(text_body)
     has_media_download_intent = (
         not is_my_yt_query
+        and not is_book_pdf_only
         and not any(k in lower_text for k in FILE_GEN_KEYWORDS)
-        and any(w in lower_text for w in YT_ACTION_KEYWORDS)
+        and any(w in lower_text for w in YT_MEDIA_KEYWORDS)
     )
 
     if yt_match or has_media_download_intent:
@@ -1582,11 +1675,13 @@ async def handle_text(message: Message):
             yt_target = yt_match.group(1)
         else:
             clean_query = re.sub(
-                r"\b(jarvis|youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|videoni|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|qoʻshigʻini|to'plam|toplam|to'plamini|toplamini|musiqa|audio|mp3|mp4|topib|top|yuklab|yuklaver|yukla|tortib|tort|skachat|tashlab|tashla|ber|bersang|bersinda|qilib|shuni|silkasini|silka|havolasini|havola|linkini|link|varyant|variant|varyantlar|variantlar|ha|ham|menga|desam|kerak|bo'laveradi|bolaveradi)\b",
+                r"\b(jarvis|youtube|yutub|yutube|dan|ni|bironta|bir|video|videosini|videoni|qo'shiq|qoshiq|qo'shig'ini|qoshig'ini|qoʻshigʻini|to'plam|toplam|to'plamini|toplamini|musiqa|audio|mp3|mp4|topib|top|yuklab|yuklaver|yukla|tortib|tort|skachat|tashlab|tashla|ber|bersang|bersinda|qilib|shuni|silkasini|silka|havolasini|havola|linkini|link|varyant|variant|varyantlar|variantlar|ha|ham|menga|desam|kerak|bo'laveradi|bolaveradi|farmat|format|farmatini|formatini)\b",
                 " ",
                 lower_text,
             )
             clean_query = re.sub(r"\s+", " ", clean_query).strip()
+            if is_book_query and "audiokitob" not in clean_query:
+                clean_query = f"{clean_query} audiokitob".strip()
             yt_target = clean_query or text_body
 
         audio_only = any(k in lower_text for k in AUDIO_INTENT_KEYWORDS)
@@ -1604,16 +1699,43 @@ async def handle_text(message: Message):
             logging.exception("YouTube yuklashda xatolik:")
         return
 
-    # 4. Bugungi kun va soat holatidagi jonli ma'lumotlar (Google Search), eslatmalar, hujjatlar
+    # 5. Bugungi kun va soat holatidagi jonli ma'lumotlar, ishonchli kitoblar (PDF/audio), rasmiy soliq va huquqiy saytlar, eslatmalar, hujjatlar
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     try:
         needs_custom_tools = should_enable_custom_tools(text_body)
+        is_tax_query = any(k in lower_text for k in TAX_DOMAIN_KEYWORDS)
+        is_legal_query = any(k in lower_text for k in LEGAL_DOMAIN_KEYWORDS)
+        strict_book_mode = not needs_custom_tools and is_book_query
+
+        if strict_book_mode:
+            trusted_filter = " OR ".join(f"site:{s}" for s in TRUSTED_BOOK_SITES)
+            query_to_send = (
+                f"Faqat ishonchli va taqiqlanmagan elektron kutubxona manbalaridan "
+                f"({trusted_filter}) quyidagi kitobning PDF, elektron yoki audio (audiokitob) "
+                f"shaklini topib, muallifi, qisqacha tavsifi va haqiqiy manba havolalarini keltir. "
+                f"Taqiqlangan yoki shubhali manbalardan foydalanma: {text_body}"
+            )
+        elif not needs_custom_tools and is_legal_query:
+            query_to_send = (
+                f"O'zbekiston Respublikasi qonunchiligi va rasmiy huquqiy manbalari "
+                f"(site:lex.uz OR site:parliament.gov.uz) ma'lumotlari asosida quyidagi so'rovga "
+                f"aniq modda raqamlari, sanalar va havolalar bilan javob ber: {text_body}"
+            )
+        elif not needs_custom_tools and is_tax_query:
+            query_to_send = (
+                f"O'zbekiston Respublikasi soliq qo'mitasi va rasmiy soliq saytlari "
+                f"(site:soliq.uz OR site:my.soliq.uz OR site:new.soliqservis.uz OR site:lex.uz) "
+                f"ma'lumotlari asosida quyidagi so'rovga eng so'nggi yangiliklar va aniq havolalar bilan javob ber: {text_body}"
+            )
+        else:
+            query_to_send = text_body
+
         response, generated_files, yt_requests = await send_message_with_fallback(
-            user_id, text_body, use_custom_tools=needs_custom_tools
+            user_id, query_to_send, use_custom_tools=needs_custom_tools
         )
         reply_text = (
-            format_response_with_sources(response)
+            format_response_with_sources(response, strict_book_sources=strict_book_mode)
             or "Kechirasiz, Janob, javob shakllantirishda uzilish yuz berdi."
         )
 
